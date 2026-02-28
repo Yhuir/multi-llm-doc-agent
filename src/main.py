@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from dotenv import load_dotenv
 
 # Import all agents
@@ -7,9 +8,11 @@ from src.agents.requirement_parser import RequirementParserAgent
 from src.agents.master_gantt import MasterGanttAgent
 from src.agents.subsystem_gantt import SubsystemGanttAgent
 from src.agents.plan_generator import PlanGeneratorAgent
-# from src.agents.content_generator import ContentGeneratorAgent # Deprecated
-from src.agents.integrated_content import IntegratedContentAgent
+from src.agents.content_generator import ContentGeneratorAgent
+from src.agents.technical_detail import TechnicalDetailAgent
+from src.agents.length_control import LengthControlAgent
 from src.agents.diagram_image import DiagramImageAgent
+from src.agents.relevance_checker import RelevanceCheckerAgent
 from src.agents.consistency_check import ConsistencyCheckAgent
 from src.agents.word_exporter import WordExporterAgent
 
@@ -18,18 +21,21 @@ load_dotenv()
 
 class DocumentGenerationOrchestrator:
     def __init__(self):
-        # Initialize necessary agents
+        # Initialize agents (Now utilizing specialized roles for high quality)
         self.requirement_parser = RequirementParserAgent()
         self.master_gantt_agent = MasterGanttAgent()
         self.subsystem_gantt_agent = SubsystemGanttAgent()
         self.plan_generator_agent = PlanGeneratorAgent()
-        self.integrated_content_agent = IntegratedContentAgent() # Batch Agent
+        self.content_generator_agent = ContentGeneratorAgent()
+        self.technical_detail_agent = TechnicalDetailAgent()
+        self.length_controller_agent = LengthControlAgent() # Re-enabled for auditing
         self.diagram_generator_agent = DiagramImageAgent()
+        self.relevance_checker_agent = RelevanceCheckerAgent()
         self.consistency_checker_agent = ConsistencyCheckAgent()
         self.word_exporter_agent = WordExporterAgent()
 
     def run_pipeline(self, input_docx_path: str):
-        print("=== 开始执行智能工程实施方案生成系统 (RPD 优化版) ===")
+        print("=== 开始执行智能工程实施方案生成系统 (v6.0 深度精修模式) ===")
 
         # 1. 需求解析
         print("\n>>> 阶段 1: 需求解析")
@@ -39,8 +45,7 @@ class DocumentGenerationOrchestrator:
         print("\n>>> 阶段 2: 生成总体甘特图")
         master_gantt = self.master_gantt_agent.run(project_reqs)
 
-        # 3-5. 子系统分解与计划规划
-        print("\n>>> 阶段 3-5: 子系统分解与计划规划")
+        # 3. 子系统分解
         subsystems = project_reqs.get("subsystems", [])
         
         final_document_data = {
@@ -51,9 +56,11 @@ class DocumentGenerationOrchestrator:
 
         for sub_name in subsystems:
             print(f"\n--- 处理子系统: {sub_name} ---")
+            # 3.1 生成子系统甘特图
             sub_gantt = self.subsystem_gantt_agent.run(master_gantt, sub_name)
+            # 3.2 生成阶段计划 (Plans)
             sub_plans_json = self.plan_generator_agent.run(sub_gantt)
-            plans_list = sub_plans_json.get("plans", []) if isinstance(sub_plans_json, dict) else sub_plans_json
+            plans_list = sub_plans_json.get("plans", [])
 
             sub_data = {
                 "name": sub_name,
@@ -62,61 +69,60 @@ class DocumentGenerationOrchestrator:
 
             for plan in plans_list:
                 plan_title = plan.get("title")
-                # 关键改进：批量处理所有动作，而不是循环 Content
-                print(f"\n>>> 阶段 6-9: 批量处理计划章节 [{plan_title}]")
-                # 这里我们直接让模型基于 plan 内部信息生成整章内容
-                # 假设 Plan 内部已经包含了动作简述，如果没有，我们可以先通过 PlanGenerator 获取
-                # 这里为了极致省 RPD，我们让模型自己从 plan_title 联想施工动作
-                integrated_text = self.integrated_content_agent.run(plan_title, plan.get("contents", []))
+                print(f"\n>>> 阶段 4: 处理计划 [{plan_title}]")
                 
-                # 阶段 7: 生图 (解析文本中已有的 JSON，不消耗额外 RPD)
-                image_configs = self.integrated_content_agent.parse_images(integrated_text)
-                final_images = []
-                for img_config in image_configs:
-                    print(f"[{self.diagram_generator_agent.name}] 正在生图: {img_config.get('caption')}")
-                    # 注意：generate_image 调用的是生图接口，不计入 Gemini RPD
-                    img_path = self.diagram_generator_agent.llm.generate_image(
-                        img_config.get("prompt"), 
-                        f"data/images/img_{os.urandom(4).hex()}.png"
-                    )
-                    img_config["source"] = img_path
-                    final_images.append(img_config)
+                # 3.3 生成该计划下的具体施工动作 (Contents)
+                # 即使 PlanGenerator 有初步列表，我们也通过 ContentGenerator 进一步细化
+                contents_json = self.content_generator_agent.run(plan)
+                contents_list = contents_json.get("contents", [])
 
-                sub_data["plans"].append({
+                plan_data = {
                     "plan_title": plan_title,
-                    "full_text": integrated_text,
-                    "images": final_images
-                })
+                    "contents": []
+                }
+
+                for content in contents_list:
+                    content_title = content.get("title")
+                    print(f"\n--- 动作: [{content_title}] ---")
+                    
+                    # 5. 生成技术方案 (Pro Model 驱动)
+                    detail_text = self.technical_detail_agent.run(content)
+
+                    # 6. 字数审计与质量补齐
+                    print(f"\n>>> 阶段 6: 执行字数审计与补齐")
+                    refined_text = self.length_controller_agent.run(detail_text)
+
+                    # 7. 生图方案与生图
+                    print(f"\n>>> 阶段 7: 生成强关联配图")
+                    diagrams_json = self.diagram_generator_agent.run(refined_text)
+                    images_list = diagrams_json.get("images", [])
+
+                    # 8. 图文一致性校验
+                    print(f"\n>>> 阶段 8: 图文相关性审计")
+                    self.relevance_checker_agent.run(refined_text, images_list)
+
+                    plan_data["contents"].append({
+                        "title": content_title,
+                        "text": refined_text,
+                        "images": images_list
+                    })
+                
+                sub_data["plans"].append(plan_data)
             
             final_document_data["subsystem_details"].append(sub_data)
 
-        # 10. 全局一致性检查
-        print("\n>>> 阶段 10: 全局逻辑检查")
+        # 9. 全局一致性检查
+        print("\n>>> 阶段 9: 全局逻辑检查")
         self.consistency_checker_agent.run(final_document_data)
         
-        # 保存中间结果
+        # 10. 保存中间结果
         os.makedirs("outputs", exist_ok=True)
         with open("outputs/final_data.json", "w", encoding="utf-8") as f:
             json.dump(final_document_data, f, ensure_ascii=False, indent=2)
             
-        # 11. Word 文档排版导出
-        print("\n>>> 阶段 11: 导出 Word 文档")
+        # 11. Word 文档导出 (原生排版)
+        print("\n>>> 阶段 11: 导出正式 Word 文档")
         output_file = self.word_exporter_agent.run(final_document_data)
         
         print("\n=== 系统执行完毕！文件已生成至 outputs/ 目录 ===")
         return output_file
-
-if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) < 2:
-        print("Usage: python src/main.py <path_to_word_doc>")
-        sys.exit(1)
-        
-    input_doc = sys.argv[1]
-    if not os.path.exists(input_doc):
-        print(f"Error: File '{input_doc}' not found.")
-        sys.exit(1)
-        
-    orchestrator = DocumentGenerationOrchestrator()
-    orchestrator.run_pipeline(input_doc)
