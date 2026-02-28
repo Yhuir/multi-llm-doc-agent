@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$*.py
+.DS_Store
+.env
+.ipynb_checkpoints/
+
+# 运行生成的临时文件与输出
+data/uploaded_*
+outputs/
+!outputs/.gitkeep
