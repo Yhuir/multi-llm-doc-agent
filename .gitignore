@@ -4,8 +4,13 @@ __pycache__/
 .DS_Store
 .env
 .ipynb_checkpoints/
+venv/
 
 # 运行生成的临时文件与输出
 data/uploaded_*
 outputs/
 !outputs/.gitkeep
+artifacts/
+db/
+uploads/
+docx_text_extract.txt
