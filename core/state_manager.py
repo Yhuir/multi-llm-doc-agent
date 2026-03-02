@@ -61,6 +61,10 @@ class StateManager:
         with self.Session() as session:
             return session.query(Task).filter_by(id=task_id).first()
 
+    def get_all_tasks(self):
+        with self.Session() as session:
+            return session.query(Task).order_by(Task.updated_at.desc()).all()
+
     def save_toc(self, task_id: str, version: int, toc_data: dict):
         with self.Session() as session:
             toc = TOCVersion(task_id=task_id, version=version, toc_data=toc_data)

@@ -1,4 +1,5 @@
 import os
+import time
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -16,6 +17,19 @@ class LLMClient:
             http_options={'api_version': 'v1alpha', 'httpx_client': custom_client}
         )
 
+    def _retry_request(self, func, *args, **kwargs):
+        """Helper to retry request on RemoteProtocolError / network disconnects."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                # 针对代理/VPN常出现的断连等网络异常重试
+                print(f"[Attempt {attempt+1}/{max_retries}] API Error: {e}")
+                if attempt == max_retries - 1:
+                    raise e
+                time.sleep(2 * (attempt + 1))  # Exponential backoff
+
     def generate_json(self, system_prompt: str, user_prompt: str, response_schema=None):
         """
         Generate a JSON response from Gemini
@@ -31,29 +45,27 @@ class LLMClient:
              
         config = types.GenerateContentConfig(**config_args)
         
-        try:
+        def _make_call():
             response = self.client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=user_prompt,
                 config=config
             )
             return response.text
-        except Exception as e:
-            print(f"Network or API Error: {e}")
-            raise e
+
+        return self._retry_request(_make_call)
 
     def generate_text(self, system_prompt: str, user_prompt: str):
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=0.7,
         )
-        try:
+        def _make_call():
             response = self.client.models.generate_content(
                 model='gemini-2.5-pro',
                 contents=user_prompt,
                 config=config
             )
             return response.text
-        except Exception as e:
-            print(f"Network or API Error: {e}")
-            raise e
+
+        return self._retry_request(_make_call)

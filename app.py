@@ -69,6 +69,18 @@ def main():
             st.success("解析及目录生成完成！")
             st.rerun()
 
+        st.divider()
+        st.subheader("继续已有任务")
+        all_tasks = orchestrator.state_manager.get_all_tasks()
+        if all_tasks:
+            task_options = {t.id: f"{t.id[:8]}... ({t.status})" for t in all_tasks}
+            selected_task = st.selectbox("选择任务恢复进度", options=list(task_options.keys()), format_func=lambda x: task_options[x])
+            if st.button("恢复选定任务"):
+                st.session_state.task_id = selected_task
+                st.rerun()
+        else:
+            st.info("暂无历史任务。")
+
     task_id = st.session_state.task_id
     if not task_id:
         st.info("请先在左侧上传文档并创建任务。")
