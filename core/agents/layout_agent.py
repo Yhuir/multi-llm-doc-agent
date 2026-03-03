@@ -10,6 +10,7 @@ class LayoutAgent:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def _set_font_style(self, run, font_name="宋体", size_pt=12, bold=False, color=None):
+        from docx.oxml.ns import qn
         run.font.name = font_name
         # For setting east asian font in docx
         run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
@@ -18,60 +19,99 @@ class LayoutAgent:
         if color:
             run.font.color.rgb = color
 
-    def generate_word(self, task_id: str, toc: dict, nodes_text: dict) -> str:
+    def generate_word(self, task_id: str, toc: dict, nodes_text: dict, images_meta_map: dict = None) -> str:
         """
         nodes_text: Dict mapping node_id to NodeText dictionary
+        images_meta_map: Dict mapping node_id to list of image metadata dicts
         """
         from docx.oxml.ns import qn
-        
+        if images_meta_map is None:
+            images_meta_map = {}
+            
         doc = Document()
         
-        # We will iterate through the TOC and print headers, then append node text if it's a level 3 node.
+        # Keep track of global image numbering if needed, but we can do per-node or just sequentially.
+        global_image_counter = 1
         
         def process_node(node, level):
+            nonlocal global_image_counter
             # Heading
             if level == 1:
                 h = doc.add_heading(node['title'], level=1)
                 for run in h.runs:
-                    run.font.name = '黑体'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
+                    self._set_font_style(run, '黑体', 16, True)
             elif level == 2:
                 h = doc.add_heading(node['title'], level=2)
                 for run in h.runs:
-                    run.font.name = '黑体'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
+                    self._set_font_style(run, '黑体', 14, True)
             elif level == 3:
                 h = doc.add_heading(node['title'], level=3)
                 for run in h.runs:
-                    run.font.name = '黑体'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
+                    self._set_font_style(run, '黑体', 12, True)
             elif level == 4:
                 h = doc.add_heading(node['title'], level=4)
                 for run in h.runs:
-                    run.font.name = '黑体'
-                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
+                    self._set_font_style(run, '黑体', 12, True)
                     
-                # Append text if we have generated content for this level 4 node
-                node_content = nodes_text.get(node['node_id'])
+                node_id = node['node_id']
+                node_content = nodes_text.get(node_id)
+                node_images = images_meta_map.get(node_id, [])
+                
                 if node_content:
                     for section in node_content.get('sections', []):
                         p_h = doc.add_paragraph()
                         r_h = p_h.add_run(section.get('h', ''))
-                        r_h.font.name = '黑体'
-                        r_h._element.rPr.rFonts.set(qn('w:eastAsia'), '黑体')
-                        r_h.bold = True
+                        self._set_font_style(r_h, '黑体', 12, True)
                         
                         text = section.get('text', '')
                         if text:
                             p = doc.add_paragraph()
                             r = p.add_run(text)
-                            r.font.name = '宋体'
-                            r._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                            self._set_font_style(r, '宋体', 12)
                             
                             # Handle "关键重难点"
                             if "重难点" in section.get('h', ''):
-                                r.font.color.rgb = RGBColor(255, 0, 0)
-                                r.bold = True
+                                self._set_font_style(r, '宋体', 12, True, RGBColor(255, 0, 0))
+                                
+                        # Check if any image binds to this section (using section header 'h' or loosely matching)
+                        # We will insert the image right after the section if bind_anchor is in the header or text
+                        for img_meta in list(node_images): # copy list to allow removal
+                            anchor = img_meta.get('bind_anchor', '')
+                            if anchor and (anchor in section.get('h', '') or (text and anchor in text)):
+                                img_path = img_meta.get('file')
+                                if img_path and os.path.exists(img_path):
+                                    # Insert Image
+                                    doc.add_paragraph() # spacing
+                                    p_img = doc.add_paragraph()
+                                    p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    r_img = p_img.add_run()
+                                    r_img.add_picture(img_path, width=Inches(5.0))
+                                    
+                                    # Insert Caption
+                                    p_cap = doc.add_paragraph()
+                                    p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                    r_cap = p_cap.add_run(f"图{global_image_counter} {img_meta.get('caption', '')}")
+                                    self._set_font_style(r_cap, '宋体', 10, False)
+                                    global_image_counter += 1
+                                    
+                                    # Remove so we don't insert twice
+                                    node_images.remove(img_meta)
+                                    
+                    # Insert any remaining images at the end of the node
+                    for img_meta in node_images:
+                        img_path = img_meta.get('file')
+                        if img_path and os.path.exists(img_path):
+                            doc.add_paragraph()
+                            p_img = doc.add_paragraph()
+                            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_img = p_img.add_run()
+                            r_img.add_picture(img_path, width=Inches(5.0))
+                            
+                            p_cap = doc.add_paragraph()
+                            p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            r_cap = p_cap.add_run(f"图{global_image_counter} {img_meta.get('caption', '')}")
+                            self._set_font_style(r_cap, '宋体', 10, False)
+                            global_image_counter += 1
 
             for child in node.get('children', []):
                 process_node(child, level + 1)

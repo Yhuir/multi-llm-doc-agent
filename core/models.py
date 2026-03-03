@@ -91,11 +91,17 @@ class SectionText(BaseModel):
     table_ref: Optional[str] = None
     style: Optional[SectionStyle] = None
 
+class ImageConfig(BaseModel):
+    image_id: str
+    bind_anchor: str
+    must_have_elements: List[str]
+
 class NodeText(BaseModel):
     node_id: str
     title: str
     sections: List[SectionText]
     references: Optional[List[str]] = []
+    image_configs: Optional[List[ImageConfig]] = []
 
 class TableData(BaseModel):
     table_id: str
