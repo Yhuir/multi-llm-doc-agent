@@ -13,4 +13,7 @@ outputs/
 artifacts/
 db/
 uploads/
+template/*.pdf
+template/*.docx
+!template/standard_template.docx
 docx_text_extract.txt

@@ -12,6 +12,7 @@ from core.agents.writer_agent import SectionWriterAgent
 from core.agents.layout_agent import LayoutAgent
 from core.agents.length_agent import LengthControlAgent
 from core.agents.image_agent import ImagePipelineAgent
+from core.agents.style_extractor_agent import StyleExtractorAgent
 
 class Orchestrator:
     def __init__(self, db_path="sqlite:///db/app.db", model_provider="deepseek-reasoner"):
@@ -31,14 +32,16 @@ class Orchestrator:
         self.layout_agent = LayoutAgent()
         self.length_agent = LengthControlAgent(self.llm_client)
         self.image_agent = ImagePipelineAgent(self.doubao_client)
+        self.style_extractor = StyleExtractorAgent(self.llm_client)
         
         self.template1_text = ""
         self.template2_text = ""
+        self.template2_path = "template/太和曲靖技术部分(1).pdf" # Default V3 template
         self._load_default_templates()
 
     def _load_default_templates(self):
-        t1_path = "昆烟实施方案-目标范本.docx"
-        t2_path = "太和曲靖技术部分(1).pdf"
+        t1_path = "template/昆烟实施方案-目标范本.docx"
+        t2_path = self.template2_path
         
         if os.path.exists(t1_path):
             try:
@@ -99,8 +102,32 @@ class Orchestrator:
         with open(f"artifacts/{task_id}/requirement.json", "w", encoding='utf-8') as f:
             json.dump(parsed_req, f, ensure_ascii=False, indent=2)
             
+        # V3: Style Extraction
+        self.process_style_extraction(task_id)
+            
         self.state_manager.update_task_status(task_id, "PARSED")
         return parsed_req
+
+    def process_style_extraction(self, task_id: str):
+        """Extract style from PDF template for V3."""
+        style_dir = f"artifacts/{task_id}/style"
+        os.makedirs(style_dir, exist_ok=True)
+        
+        # Use default template for now
+        pdf_path = self.template2_path 
+        if not os.path.exists(pdf_path):
+            # Fallback to current dir if template folder is missing
+            pdf_path = os.path.basename(pdf_path)
+            
+        if os.path.exists(pdf_path):
+            style_profile = self.style_extractor.generate_style_profile(pdf_path)
+            with open(f"{style_dir}/style_profile.json", "w", encoding='utf-8') as f:
+                f.write(style_profile.model_dump_json(indent=2))
+        else:
+            # Save default style if no template found
+            style_profile = self.style_extractor.get_default_style_profile()
+            with open(f"{style_dir}/style_profile.json", "w", encoding='utf-8') as f:
+                f.write(style_profile.model_dump_json(indent=2))
 
     def generate_toc(self, task_id: str):
         with open(f"artifacts/{task_id}/requirement.json", "r", encoding='utf-8') as f:
@@ -201,6 +228,13 @@ class Orchestrator:
         latest_toc_record = self.state_manager.get_latest_toc(task_id)
         toc_data = latest_toc_record.toc_data
         
+        # Load style profile
+        style_profile = None
+        style_path = f"artifacts/{task_id}/style/style_profile.json"
+        if os.path.exists(style_path):
+            with open(style_path, "r", encoding='utf-8') as f:
+                style_profile = json.load(f)
+        
         nodes_text = {}
         images_meta_map = {}
         
@@ -217,6 +251,17 @@ class Orchestrator:
                     with open(images_file, "r", encoding='utf-8') as f:
                         images_meta_map[node_id] = json.load(f)
                         
-        output_path = self.layout_agent.generate_word(task_id, toc_data, nodes_text, images_meta_map)
+        template_path = self.template2_path.replace('.pdf', '.docx')
+        if not os.path.exists(template_path):
+            template_path = "template/standard_template.docx"
+             
+        output_path = self.layout_agent.generate_word(
+            task_id, 
+            toc_data, 
+            nodes_text, 
+            images_meta_map,
+            template_path=template_path,
+            style_profile=style_profile
+        )
         self.state_manager.update_task_status(task_id, "DONE")
         return output_path

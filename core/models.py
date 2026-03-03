@@ -111,3 +111,67 @@ class TableData(BaseModel):
 
 class NodeTables(BaseModel):
     tables: List[TableData]
+
+class Palette(BaseModel):
+    title: str
+    h1: str
+    h2: str
+    em_blue: str
+    em_green: str
+    em_red: str
+    table_header_fill: str
+    caption: str
+
+class Fonts(BaseModel):
+    cn: str
+    fallback: str
+    mono: str
+
+class Sizes(BaseModel):
+    doc_title_pt: float
+    h1_pt: float
+    h2_pt: float
+    h3_pt: float
+    body_pt: float
+    caption_pt: float
+
+class ParagraphSpace(BaseModel):
+    h1: float
+    h2: float
+    h3: float
+    body: float
+
+class ParagraphStyle(BaseModel):
+    line_spacing: float
+    first_line_indent_chars: int
+    space_before_pt: ParagraphSpace
+    space_after_pt: ParagraphSpace
+
+class TableStyle(BaseModel):
+    header_bold: bool
+    header_center: bool
+    repeat_header: bool
+    borders: str
+    cell_padding_pt: float
+
+class ImageGrid(BaseModel):
+    enabled: bool
+    max_images: int
+    layout_candidates: List[str]
+    cell_padding_pt: float
+
+class ImageStyle(BaseModel):
+    default_width_in: float
+    max_width_in: float
+    align: str
+    caption_enabled_default: bool
+    caption_color: str
+    grid: ImageGrid
+
+class StyleProfile(BaseModel):
+    palette: Palette
+    fonts: Fonts
+    sizes: Sizes
+    paragraph: ParagraphStyle
+    table: TableStyle
+    image: ImageStyle
