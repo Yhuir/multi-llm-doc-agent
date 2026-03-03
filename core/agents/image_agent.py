@@ -35,7 +35,11 @@ class ImagePipelineAgent:
             返回 JSON 列表，包含 image_id (如 img_001), prompt (描述图片内容的绘图指令), 
             caption (图题), must_have_elements (必须出现的元素列表)。
             """
-            user_prompt = f"正文标题: {node_text.get('title')}\n正文内容片段: {node_text.get('sections')[0].get('text')[:500]}..."
+            if not node_text or not node_text.get('sections'):
+                user_prompt = f"正文标题: {node_text.get('title') if node_text else '未知标题'}\n内容为空，请根据标题自由发挥生成 2 张配图提示词。"
+            else:
+                first_section_text = node_text.get('sections')[0].get('text', '') if len(node_text.get('sections')) > 0 else ''
+                user_prompt = f"正文标题: {node_text.get('title')}\n正文内容片段: {first_section_text[:500]}..."
             # 这里简化处理，实际落地可定义更复杂的 schema
             # 暂时复用 ImagePromptsList
             pass

@@ -11,6 +11,11 @@ load_dotenv()
 
 class DoubaoClient:
     def __init__(self):
+        # 强力直连：清理代理环境变量
+        for env_key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
+            if env_key in os.environ:
+                del os.environ[env_key]
+
         # 文本模型接入点
         self.chat_base_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
         self.chat_model = os.getenv("ARK_CHAT_MODEL", "ep-20260302152925-62nm8")

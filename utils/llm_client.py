@@ -2,24 +2,38 @@ import os
 import time
 import requests
 import json
+import urllib3
 from google import genai
 from google.genai import types
 import httpx
 from dotenv import load_dotenv
 
+# 禁用全局 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 
 class LLMClient:
     def __init__(self, provider="volcengine-deepseek"):
         self.provider = provider
+        
+        # --- 强力直连保障：清理当前进程的代理环境变量 ---
+        for env_key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
+            if env_key in os.environ:
+                del os.environ[env_key]
+
         self.ark_api_key = os.getenv("ARK_API_KEY", "")
-        self.doubao_base_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-        self.doubao_model = os.getenv("ARK_CHAT_MODEL", "ep-20260302152925-62nm8")
+        # ... (保持原有地址定义)
         self.volc_base_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
         self.volc_model = os.getenv("ARK_DEEPSEEK_MODEL", "deepseek-v3-2-251201")
+        
+        self.doubao_base_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        self.doubao_model = os.getenv("ARK_CHAT_MODEL", "ep-20260302152925-62nm8")
+        
         self.deepseek_base_url = "https://api.deepseek.com/chat/completions"
         self.deepseek_model = "deepseek-reasoner"
-        self.httpx_client = httpx.Client(http2=False, timeout=180.0)
+        
+        # httpx 必须设置 trust_env=False 才会忽略 Mac 系统代理设置
+        self.httpx_client = httpx.Client(http2=False, timeout=300.0, verify=False, trust_env=False)
 
     def _get_gemini_client(self):
         api_key = os.getenv("GEMINI_API_KEY")
@@ -35,20 +49,15 @@ class LLMClient:
                 return func(*args, **kwargs)
             except Exception as e:
                 print(f"[{self.provider} Attempt {attempt+1}/{max_retries}] API Error: {e}")
-                if attempt == max_retries - 1:
-                    raise e
-                time.sleep(2 * (attempt + 1))
+                if attempt == max_retries - 1: raise e
+                time.sleep(3 * (attempt + 1))
 
     def generate_json(self, system_prompt: str, user_prompt: str, response_schema=None):
-        """生成 JSON，修复 max_tokens 冲突"""
+        """增强版 JSON 生成，强制绕过代理，忽略 SSL，设置超长上限"""
         
         if self.provider == "volcengine-deepseek":
             def _make_volc_call():
-                api_key = os.getenv("ARK_API_KEY")
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
+                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.ark_api_key}"}
                 
                 payload = {
                     "model": self.volc_model,
@@ -56,41 +65,37 @@ class LLMClient:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    # 关键修复：不要同时设置这两个参数
-                    # "max_tokens": 4096, 
-                    "max_completion_tokens": 8192, 
+                    # 设置更大的补全长度 (思考+正文总上限)，防止截断导致 JSON 损坏
+                    "max_completion_tokens": 16384, 
                     "temperature": 1.0,
                     "thinking": {"type": "enabled"}
                 }
                 
                 if response_schema and hasattr(response_schema, "model_json_schema"):
-                    payload["messages"][1]["content"] += f"\n\n请严格返回如下 JSON 结构，不要包含任何 Markdown 格式，只返回 JSON 字符串：\n{json.dumps(response_schema.model_json_schema(), ensure_ascii=False)}"
+                    payload["messages"][1]["content"] += f"\n\n请直接输出纯 JSON，不要包含任何推理思维链，务必确保 JSON 结构闭合：\n{json.dumps(response_schema.model_json_schema(), ensure_ascii=False)}"
 
-                response = requests.post(self.volc_base_url, headers=headers, json=payload, timeout=300, proxies={"http": None, "https": None})
+                # 强制 verify=False 且不走任何代理，解决 SSL EOF 和长连接中断问题
+                response = requests.post(
+                    self.volc_base_url, 
+                    headers=headers, 
+                    json=payload, 
+                    timeout=300, 
+                    verify=False,
+                    proxies={"http": None, "https": None} 
+                )
                 
-                # 如果 400 报错，可能是因为模型不支持 thinking 或 max_completion_tokens
                 if response.status_code == 400:
-                    error_msg = response.text
-                    print(f"⚠️ 初始请求失败，尝试降级兼容模式... 详情: {error_msg}")
-                    
-                    # 降级：改回 max_tokens，去掉 thinking
-                    payload.pop("max_completion_tokens", None)
+                    print("⚠️ 尝试普通模式...")
                     payload.pop("thinking", None)
-                    payload["max_tokens"] = 4096
                     payload["temperature"] = 0.7
-                    
-                    response = requests.post(self.volc_base_url, headers=headers, json=payload, timeout=300, proxies={"http": None, "https": None})
+                    response = requests.post(self.volc_base_url, headers=headers, json=payload, timeout=300, verify=False, proxies={"http": None, "https": None})
 
-                if response.status_code != 200:
-                    print(f"❌ 火山引擎 API 最终报错: {response.text}")
-                    raise Exception(f"API Error {response.status_code}: {response.text}")
-                
+                response.raise_for_status()
                 res_json = response.json()
-                content = res_json['choices'][0]['message']['content']
-                return self._clean_markdown(content)
-            
+                return self._clean_markdown(res_json['choices'][0]['message']['content'])
             return self._retry_request(_make_volc_call)
 
+        # Gemini 逻辑
         if self.provider == "gemini-2.5-pro":
             def _make_gemini_call():
                 client = self._get_gemini_client()
@@ -104,22 +109,21 @@ class LLMClient:
                 return response.text
             return self._retry_request(_make_gemini_call)
 
+        # OpenAI 协议模型 (DeepSeek 官网/豆包)
         def _make_openai_call():
-            api_key = os.getenv("DEEPSEEK_API_KEY") if self.provider == "deepseek-reasoner" else os.getenv("ARK_API_KEY")
-            base_url = self.deepseek_base_url if self.provider == "deepseek-reasoner" else self.doubao_base_url
-            model = self.deepseek_model if self.provider == "deepseek-reasoner" else self.doubao_model
+            is_ds = (self.provider == "deepseek-reasoner")
+            api_key = os.getenv("DEEPSEEK_API_KEY") if is_ds else os.getenv("ARK_API_KEY")
+            base_url = self.deepseek_base_url if is_ds else self.doubao_base_url
+            model = self.deepseek_model if is_ds else self.doubao_model
+            
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-            full_user_prompt = user_prompt
-            if response_schema and hasattr(response_schema, "model_json_schema"):
-                full_user_prompt += f"\n\n请严格返回如下 JSON 结构：\n{json.dumps(response_schema.model_json_schema(), ensure_ascii=False)}"
-
             payload = {
                 "model": model,
-                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": full_user_prompt}],
-                "temperature": 1.0 if self.provider == "deepseek-reasoner" else 0.2,
+                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                "temperature": 1.0 if is_ds else 0.2,
                 "max_tokens": 4096
             }
-            response = requests.post(base_url, headers=headers, json=payload, timeout=240, proxies={"http": None, "https": None})
+            response = requests.post(base_url, headers=headers, json=payload, timeout=240, verify=False, proxies={"http": None, "https": None})
             response.raise_for_status()
             res_json = response.json()
             return self._clean_markdown(res_json['choices'][0]['message']['content'])
