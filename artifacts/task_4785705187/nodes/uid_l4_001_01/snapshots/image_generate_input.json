@@ -1,0 +1,10 @@
+{
+  "task_id": "task_4785705187",
+  "node_uid": "uid_l4_001_01",
+  "node_id": "1.1.1.1",
+  "stage": "image_generate",
+  "current_status": "FACT_PASSED",
+  "current_stage": "FACT_PASSED",
+  "last_output_artifact": "artifacts/task_4785705187/nodes/uid_l4_001_01/fact_check.json",
+  "generated_at": "2026-03-08T05:10:13.293864+00:00"
+}

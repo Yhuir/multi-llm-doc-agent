@@ -1,0 +1,32 @@
+{
+  "project": {
+    "name": "round6-smoke",
+    "customer": "",
+    "location": "",
+    "duration_days": null,
+    "milestones": []
+  },
+  "scope": {
+    "overview": "",
+    "subsystems": [
+      {
+        "name": "子系统1",
+        "description": "基础实施范围",
+        "requirements": [
+          {
+            "type": "text",
+            "key": "scope",
+            "value": "基础实施范围",
+            "source_ref": "p1#L2"
+          }
+        ],
+        "interfaces": []
+      }
+    ]
+  },
+  "constraints": {
+    "standards": [],
+    "acceptance": []
+  },
+  "source_index": {}
+}

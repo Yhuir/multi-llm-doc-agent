@@ -1103,6 +1103,6 @@ V1 最终至少应实现：
 4. `backend/app_service/task_service.py`
 5. `backend/orchestrator/orchestrator.py`
 6. `backend/worker/node_runner.py`
-7. `ui/app.py`
+7. `ui/src/App.jsx`
 
 这样可以最快形成可运行骨架。

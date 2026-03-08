@@ -1,0 +1,10 @@
+{
+  "task_id": "task_98500016f3",
+  "node_uid": "uid_l4_001_02",
+  "node_id": "1.1.1.2",
+  "stage": "consistency",
+  "current_status": "LENGTH_PASSED",
+  "current_stage": "LENGTH_PASSED",
+  "last_output_artifact": "artifacts/task_98500016f3/nodes/uid_l4_001_02/length_control.json",
+  "generated_at": "2026-03-08T05:12:03.958452+00:00"
+}

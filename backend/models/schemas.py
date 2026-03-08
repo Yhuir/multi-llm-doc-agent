@@ -224,6 +224,17 @@ class RequirementDocument(StrictBaseModel):
     source_index: dict[str, SourceIndexItem] = Field(default_factory=dict)
 
 
+class ParseReport(StrictBaseModel):
+    task_id: str
+    source_file: str
+    result: AgentResult
+    paragraph_count: int
+    subsystem_count: int
+    missing_fields: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    generated_at: str = Field(default_factory=utc_now_iso)
+
+
 class TextParagraph(StrictBaseModel):
     paragraph_id: str
     text: str
@@ -334,9 +345,19 @@ class TablesArtifact(StrictBaseModel):
     tables: list[TableItem] = Field(default_factory=list)
 
 
+class ConsistencyIssue(StrictBaseModel):
+    issue_type: str
+    location: str
+    detail: str
+    suggestion: str
+    fix_action: str | None = None
+    fixable: bool = False
+    fixed: bool = False
+
+
 class CheckResult(StrictBaseModel):
     result: AgentResult
-    issues: list[str] = Field(default_factory=list)
+    issues: list[ConsistencyIssue] = Field(default_factory=list)
 
 
 class ConsistencyChecks(StrictBaseModel):

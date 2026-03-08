@@ -1,0 +1,10 @@
+{
+  "task_id": "task_ec252e422b",
+  "node_uid": "uid_l4_001_02",
+  "node_id": "1.1.1.2",
+  "stage": "image_verify",
+  "current_status": "IMAGE_DONE",
+  "current_stage": "IMAGE_DONE",
+  "last_output_artifact": "artifacts/task_ec252e422b/nodes/uid_l4_001_02/images.json",
+  "generated_at": "2026-03-08T04:58:48.859091+00:00"
+}

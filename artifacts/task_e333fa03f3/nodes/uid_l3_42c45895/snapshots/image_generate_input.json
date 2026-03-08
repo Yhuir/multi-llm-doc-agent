@@ -1,0 +1,10 @@
+{
+  "task_id": "task_e333fa03f3",
+  "node_uid": "uid_l3_42c45895",
+  "node_id": "1.1.2",
+  "stage": "image_generate",
+  "current_status": "FACT_PASSED",
+  "current_stage": "FACT_PASSED",
+  "last_output_artifact": "artifacts/task_e333fa03f3/nodes/uid_l3_42c45895/fact_check.json",
+  "generated_at": "2026-03-08T04:46:44.789532+00:00"
+}

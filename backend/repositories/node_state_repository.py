@@ -10,6 +10,8 @@ from backend.repositories.db import SQLiteDB
 
 
 class NodeStateRepository:
+    _UNSET = object()
+
     def __init__(self, db: SQLiteDB) -> None:
         self.db = db
 
@@ -110,26 +112,50 @@ class NodeStateRepository:
         status: NodeStatus,
         progress: float,
         current_stage: str,
-        last_error: str | None = None,
-        output_artifact_path: str | None = None,
+        last_error: str | None | object = _UNSET,
+        input_snapshot_path: str | None | object = _UNSET,
+        output_artifact_path: str | None | object = _UNSET,
         manual_action_status: ManualActionStatus | None = None,
         image_manual_required: bool | None = None,
-        finished_at: str | None = None,
+        started_at: str | None | object = _UNSET,
+        finished_at: str | None | object = _UNSET,
     ) -> None:
         payload: dict[str, Any] = {
             "status": status.value,
             "progress": progress,
             "current_stage": current_stage,
-            "last_error": last_error,
-            "output_artifact_path": output_artifact_path,
             "updated_at": utc_now_iso(),
             "last_heartbeat_at": utc_now_iso(),
-            "finished_at": finished_at,
         }
+        if last_error is not self._UNSET:
+            payload["last_error"] = last_error
+        if input_snapshot_path is not self._UNSET:
+            payload["input_snapshot_path"] = input_snapshot_path
+        if output_artifact_path is not self._UNSET:
+            payload["output_artifact_path"] = output_artifact_path
+        if started_at is not self._UNSET:
+            payload["started_at"] = started_at
+        if finished_at is not self._UNSET:
+            payload["finished_at"] = finished_at
         if manual_action_status is not None:
             payload["manual_action_status"] = manual_action_status.value
         if image_manual_required is not None:
             payload["image_manual_required"] = int(image_manual_required)
+        self._update(task_id, node_uid, payload)
+
+    def touch_heartbeat(
+        self,
+        task_id: str,
+        node_uid: str,
+        *,
+        current_stage: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "updated_at": utc_now_iso(),
+            "last_heartbeat_at": utc_now_iso(),
+        }
+        if current_stage is not None:
+            payload["current_stage"] = current_stage
         self._update(task_id, node_uid, payload)
 
     def increment_retry(

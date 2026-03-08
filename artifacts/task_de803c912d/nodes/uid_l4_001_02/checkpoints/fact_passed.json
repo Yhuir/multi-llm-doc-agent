@@ -1,0 +1,24 @@
+{
+  "task_id": "task_de803c912d",
+  "node_uid": "uid_l4_001_02",
+  "node_id": "1.1.1.2",
+  "status": "FACT_PASSED",
+  "current_stage": "FACT_PASSED",
+  "input_snapshot_path": "artifacts/task_de803c912d/nodes/uid_l4_001_02/snapshots/fact_input.json",
+  "output_artifact_path": "artifacts/task_de803c912d/nodes/uid_l4_001_02/fact_check.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 0,
+  "retry_fact": 0,
+  "duration_ms": 1,
+  "metrics": {
+    "stage": "fact",
+    "progress": 0.35,
+    "word_count": 1712,
+    "grounded_ratio": 1.0,
+    "table_count": 0,
+    "consistency_issue_count": 0,
+    "image_manual_required": false
+  },
+  "created_at": "2026-03-08T05:13:39.051089+00:00"
+}

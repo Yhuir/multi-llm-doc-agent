@@ -87,11 +87,11 @@ Core workflow:
 - Create tables only when the content is actually structured enough
 
 ### Architecture rules
-- Streamlit is frontend only
+- React is frontend only
 - Worker handles background execution
 - SQLite stores metadata
 - Local filesystem stores artifacts
-- Do not collapse everything into a single long-running Streamlit script
+- Do not collapse everything into a single long-running frontend script
 
 ---
 
@@ -105,7 +105,7 @@ Do this first:
 - Services
 - Orchestrator skeleton
 - Worker skeleton
-- Streamlit app skeleton
+- React app skeleton
 - Requirement Parser
 - TOC Generator
 - TOC Review
@@ -132,7 +132,7 @@ Create or complete these files first:
 - `backend/app_service/progress_service.py`
 - `backend/orchestrator/orchestrator.py`
 - `backend/worker/node_runner.py`
-- `ui/app.py`
+- `ui/src/App.jsx`
 
 If some repository files are grouped differently, keep the intent but preserve clear separation of responsibilities.
 

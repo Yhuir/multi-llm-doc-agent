@@ -1,0 +1,15 @@
+{
+  "task_id": "task_4785705187",
+  "source_file": "artifacts/task_4785705187/input/input.docx",
+  "result": "PASS",
+  "paragraph_count": 197,
+  "subsystem_count": 1,
+  "missing_fields": [
+    "constraints.standards",
+    "constraints.acceptance"
+  ],
+  "warnings": [
+    "TODO: replace rule-based parser with richer extraction in later rounds"
+  ],
+  "generated_at": "2026-03-08T05:10:13.249897+00:00"
+}

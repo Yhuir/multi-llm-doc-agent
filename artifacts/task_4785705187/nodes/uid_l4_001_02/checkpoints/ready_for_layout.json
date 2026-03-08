@@ -1,0 +1,24 @@
+{
+  "task_id": "task_4785705187",
+  "node_uid": "uid_l4_001_02",
+  "node_id": "1.1.1.2",
+  "status": "READY_FOR_LAYOUT",
+  "current_stage": "READY_FOR_LAYOUT",
+  "input_snapshot_path": "artifacts/task_4785705187/nodes/uid_l4_001_02/snapshots/consistency_input.json",
+  "output_artifact_path": "artifacts/task_4785705187/nodes/uid_l4_001_02/consistency.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 0,
+  "retry_fact": 0,
+  "duration_ms": 2,
+  "metrics": {
+    "stage": "consistency",
+    "progress": 0.94,
+    "word_count": 2151,
+    "grounded_ratio": 1.0,
+    "table_count": 0,
+    "consistency_issue_count": 1,
+    "image_manual_required": false
+  },
+  "created_at": "2026-03-08T05:10:13.377153+00:00"
+}
