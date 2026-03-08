@@ -1,0 +1,25 @@
+{
+  "project": {
+    "name": "flow-check",
+    "customer": "",
+    "location": "",
+    "duration_days": null,
+    "milestones": []
+  },
+  "scope": {
+    "overview": "",
+    "subsystems": [
+      {
+        "name": "子系统1",
+        "description": "基础实施范围",
+        "requirements": [],
+        "interfaces": []
+      }
+    ]
+  },
+  "constraints": {
+    "standards": [],
+    "acceptance": []
+  },
+  "source_index": {}
+}

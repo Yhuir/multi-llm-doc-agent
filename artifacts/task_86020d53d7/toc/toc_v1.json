@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-07T19:19:01.642395+00:00",
+  "based_on_version": null,
+  "tree": [
+    {
+      "node_uid": "uid_root_001",
+      "node_id": "1",
+      "level": 1,
+      "title": "工程实施方案",
+      "is_generation_unit": false,
+      "source_refs": [],
+      "constraints": null,
+      "children": [
+        {
+          "node_uid": "uid_l2_001",
+          "node_id": "1.1",
+          "level": 2,
+          "title": "flow-check",
+          "is_generation_unit": false,
+          "source_refs": [],
+          "constraints": null,
+          "children": [
+            {
+              "node_uid": "uid_l3_001",
+              "node_id": "1.1.1",
+              "level": 3,
+              "title": "子系统1",
+              "is_generation_unit": true,
+              "source_refs": [],
+              "constraints": {
+                "min_words": 1800,
+                "recommended_words": [
+                  1800,
+                  2200
+                ],
+                "images": [
+                  2,
+                  3
+                ]
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
