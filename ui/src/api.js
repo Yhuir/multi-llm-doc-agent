@@ -1,28 +1,50 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
 async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, options);
-  const contentType = res.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
-    ? await res.json()
-    : await res.text();
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) {
-    const detail = typeof payload === "object" && payload?.detail ? payload.detail : payload;
-    throw new Error(detail || `Request failed: ${res.status}`);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...fetchOptions,
+      signal: controller.signal
+    });
+    const contentType = res.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json")
+      ? await res.json()
+      : await res.text();
+
+    if (!res.ok) {
+      const detail = typeof payload === "object" && payload?.detail ? payload.detail : payload;
+      throw new Error(detail || `Request failed: ${res.status}`);
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`请求超时：${path}`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
   }
-  return payload;
 }
 
 export async function getSystemConfig() {
   return request("/system/config");
 }
 
+export async function getHealth() {
+  return request("/health", { timeoutMs: 3000 });
+}
+
 export async function updateSystemConfig(config) {
   return request("/system/config", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config)
+    body: JSON.stringify(config),
+    timeoutMs: 10000
   });
 }
 
@@ -82,7 +104,8 @@ export async function reviewToc(taskId, feedback, basedOnVersionNo = null) {
     body: JSON.stringify({
       feedback,
       based_on_version_no: basedOnVersionNo
-    })
+    }),
+    timeoutMs: 60000
   });
 }
 
@@ -96,6 +119,15 @@ export async function confirmToc(taskId, versionNo) {
 
 export async function startGeneration(taskId) {
   return request(`/tasks/${taskId}/generation/start`, { method: "POST" });
+}
+
+export async function confirmAndStartGeneration(taskId, versionNo) {
+  return request(`/tasks/${taskId}/generation/confirm-and-start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ version_no: versionNo }),
+    timeoutMs: 30000
+  });
 }
 
 export async function listNodes(taskId) {

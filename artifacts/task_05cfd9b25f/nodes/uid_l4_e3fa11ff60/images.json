@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_e3fa11ff60",
+  "images": [
+    {
+      "image_id": "img_001",
+      "type": "process",
+      "file": "images/img_001.png",
+      "caption": "图001 安装告知手续办理实施范围与目标process示意",
+      "group_caption": null,
+      "prompt_id": "prompt_001",
+      "must_have_elements": [
+        "安装告知手续办理",
+        "安装告知手续办理实施范围与目标",
+        "施工",
+        "安装"
+      ],
+      "bind_anchor": "anchor_uid_l4_e3fa11ff60_01",
+      "bind_section": "安装告知手续办理实施范围与目标",
+      "retry_count": 1,
+      "status": "PASS"
+    },
+    {
+      "image_id": "img_002",
+      "type": "acceptance",
+      "file": "images/img_002.png",
+      "caption": "图002 安装告知手续办理施工准备与资源配置acceptance示意",
+      "group_caption": null,
+      "prompt_id": "prompt_002",
+      "must_have_elements": [
+        "安装告知手续办理",
+        "安装告知手续办理实施范围与目标",
+        "施工",
+        "安装"
+      ],
+      "bind_anchor": "anchor_uid_l4_e3fa11ff60_02",
+      "bind_section": "安装告知手续办理施工准备与资源配置",
+      "retry_count": 3,
+      "status": "NEED_MANUAL_CONFIRM"
+    }
+  ]
+}

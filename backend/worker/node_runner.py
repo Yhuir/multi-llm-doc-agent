@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -12,24 +11,37 @@ from typing import Any, Callable
 
 from backend.agents import (
     ConsistencyCheckAgent,
+    EntityExtractorAgent,
     FactGroundingAgent,
+    ImageGenerationAgent,
+    ImagePromptAgent,
+    ImageRelevanceAgent,
+    LayoutAgent,
     LengthControlAgent,
     SectionWriterAgent,
     TableBuilderAgent,
+    WordExportAgent,
 )
 from backend.models.enums import (
     AgentResult,
     EventStatus,
+    ImageStatus,
     ManualActionStatus,
     NodeStatus,
 )
 from backend.models.schemas import (
+    EntityExtraction,
     EventLog,
     FactCheck,
+    ImagePrompts,
+    ImageRelevanceReport,
+    ImageScoreItem,
+    ImagesArtifact,
     Metrics,
     NodeState,
     NodeText,
     RequirementDocument,
+    TOCDocument,
     utc_now_iso,
 )
 from backend.repositories.event_log_repository import EventLogRepository
@@ -66,7 +78,6 @@ class NodeRunner:
         "text",
         "fact",
         "image_generate",
-        "image_verify",
         "length",
         "consistency",
         "layout",
@@ -77,7 +88,7 @@ class NodeRunner:
         NodeStatus.TEXT_GENERATING: "text",
         NodeStatus.FACT_CHECKING: "fact",
         NodeStatus.IMAGE_GENERATING: "image_generate",
-        NodeStatus.IMAGE_VERIFYING: "image_verify",
+        NodeStatus.IMAGE_VERIFYING: "length",
         NodeStatus.LENGTH_CHECKING: "length",
         NodeStatus.CONSISTENCY_CHECKING: "consistency",
     }
@@ -86,7 +97,7 @@ class NodeRunner:
         NodeStatus.PENDING: "text",
         NodeStatus.TEXT_DONE: "fact",
         NodeStatus.FACT_PASSED: "image_generate",
-        NodeStatus.IMAGE_DONE: "image_verify",
+        NodeStatus.IMAGE_DONE: "length",
         NodeStatus.IMAGE_VERIFIED: "length",
         NodeStatus.LENGTH_PASSED: "consistency",
         NodeStatus.READY_FOR_LAYOUT: "layout",
@@ -109,10 +120,11 @@ class NodeRunner:
             NodeStatus.WAITING_MANUAL,
             NodeStatus.NODE_FAILED,
         },
-        NodeStatus.IMAGE_DONE: {NodeStatus.IMAGE_VERIFYING, NodeStatus.NODE_FAILED},
+        NodeStatus.IMAGE_DONE: {NodeStatus.LENGTH_CHECKING, NodeStatus.NODE_FAILED},
         NodeStatus.IMAGE_VERIFYING: {
             NodeStatus.IMAGE_VERIFIED,
             NodeStatus.IMAGE_GENERATING,
+            NodeStatus.LENGTH_CHECKING,
             NodeStatus.WAITING_MANUAL,
             NodeStatus.NODE_FAILED,
         },
@@ -162,16 +174,6 @@ class NodeRunner:
             done_status=NodeStatus.IMAGE_DONE,
             progress_start=0.40,
             progress_done=0.55,
-            retry_field="retry_image",
-            retry_limit=2,
-            manual_on_fail=True,
-        ),
-        "image_verify": StageConfig(
-            key="image_verify",
-            start_status=NodeStatus.IMAGE_VERIFYING,
-            done_status=NodeStatus.IMAGE_VERIFIED,
-            progress_start=0.60,
-            progress_done=0.72,
             retry_field="retry_image",
             retry_limit=2,
             manual_on_fail=True,
@@ -231,6 +233,15 @@ class NodeRunner:
         length_control: LengthControlAgent | None = None,
         consistency_check: ConsistencyCheckAgent | None = None,
         table_builder: TableBuilderAgent | None = None,
+        layout_agent: LayoutAgent | None = None,
+        word_export_agent: WordExportAgent | None = None,
+        entity_extractor: EntityExtractorAgent | None = None,
+        image_prompt: ImagePromptAgent | None = None,
+        image_generation: ImageGenerationAgent | None = None,
+        image_relevance: ImageRelevanceAgent | None = None,
+        image_retry_limit: int = 3,
+        image_score_threshold: float = 0.75,
+        system_config_getter: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.node_repository = node_repository
         self.task_repository = task_repository
@@ -242,6 +253,17 @@ class NodeRunner:
         self.length_control = length_control or LengthControlAgent()
         self.consistency_check = consistency_check or ConsistencyCheckAgent()
         self.table_builder = table_builder or TableBuilderAgent()
+        self.layout_agent = layout_agent or LayoutAgent()
+        self.word_export_agent = word_export_agent or WordExportAgent()
+        self.entity_extractor = entity_extractor or EntityExtractorAgent()
+        self.image_prompt = image_prompt or ImagePromptAgent()
+        self.image_generation = image_generation or ImageGenerationAgent()
+        self.image_relevance = image_relevance or ImageRelevanceAgent(
+            score_threshold=image_score_threshold
+        )
+        self.image_retry_limit = image_retry_limit
+        self.image_score_threshold = image_score_threshold
+        self.system_config_getter = system_config_getter or (lambda: {})
 
     def run_generation(self, task_id: str) -> GenerationSummary:
         """Run unfinished nodes and resume from the latest stable node stage."""
@@ -303,26 +325,26 @@ class NodeRunner:
         started = time.perf_counter()
         self.task_repository.touch_heartbeat(task_id, stage="LAYOUTING", node_uid=None)
 
-        layout_path = self.artifacts_root / task_id / "final" / "layout_checkpoint.json"
-        layout_path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_json(
-            layout_path,
-            {
-                "task_id": task_id,
-                "stage": "LAYOUTING",
-                "status": "PASS",
-                "generated_at": utc_now_iso(),
-            },
+        toc_document = self._load_confirmed_toc(task_id)
+        payload = self.layout_agent.build(
+            task_id=task_id,
+            artifacts_root=self.artifacts_root,
+            toc_document=toc_document,
         )
+        layout_path = self.artifacts_root / task_id / "final" / "layout_blocks.json"
+        self._write_json(layout_path, payload)
 
         duration_ms = int((time.perf_counter() - started) * 1000)
         self._log(
             task_id,
             stage="LAYOUTING",
             status=EventStatus.SUCCESS,
-            message="Layout stage checkpoint completed.",
+            message=(
+                f"Layout blocks generated with {len(payload.get('blocks') or [])} blocks."
+            ),
             output_artifact_path=str(layout_path),
             duration_ms=duration_ms,
+            meta_json={"warning_count": len(payload.get("warnings") or [])},
         )
         return layout_path
 
@@ -330,16 +352,23 @@ class NodeRunner:
         started = time.perf_counter()
         self.task_repository.touch_heartbeat(task_id, stage="EXPORTING", node_uid=None)
 
-        output_path = self._export_output(task_id)
+        output_dir = self.artifacts_root / task_id / "final"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path, warnings = self.word_export_agent.export(
+            template_path=self.template_path,
+            layout_blocks_path=output_dir / "layout_blocks.json",
+            output_path=output_dir / "output.docx",
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
 
         self._log(
             task_id,
             stage="EXPORTING",
             status=EventStatus.SUCCESS,
-            message="Exported output.docx",
+            message="Exported output.docx from layout blocks.",
             output_artifact_path=str(output_path),
             duration_ms=duration_ms,
+            meta_json={"warning_count": len(warnings)},
         )
         return output_path
 
@@ -454,6 +483,8 @@ class NodeRunner:
                 input_snapshot_path=input_snapshot_path,
                 output_artifact_path=str(output_path),
                 last_error=None,
+                manual_action_status=node.manual_action_status,
+                image_manual_required=node.image_manual_required,
                 finished_at=finished_at,
             )
             self._write_checkpoint(
@@ -675,8 +706,8 @@ class NodeRunner:
         writers: dict[str, Callable[[NodeState, Path], Path]] = {
             "text": self._write_text_artifact,
             "fact": self._write_fact_check_artifact,
-            "image_generate": self._write_stub_images_artifact,
-            "image_verify": self._write_stub_image_verify_artifact,
+            "image_generate": self._write_image_generate_artifact,
+            "image_verify": self._write_image_verify_artifact,
             "length": self._write_length_artifact,
             "consistency": self._write_consistency_artifact,
             "layout": self._write_layout_artifact,
@@ -813,6 +844,8 @@ class NodeRunner:
         text_path = node_dir / "text.json"
         word_count = 0
         grounded_ratio = 0.0
+        image_score_avg = 0.0
+        manual_image_count = 0
         table_count = 0
         consistency_issue_count = 0
         if text_path.exists():
@@ -828,6 +861,23 @@ class NodeRunner:
                 grounded_ratio = float(payload.get("grounded_ratio") or 0.0)
             except Exception:  # noqa: BLE001
                 grounded_ratio = 0.0
+        relevance_path = node_dir / "image_relevance.json"
+        if relevance_path.exists():
+            try:
+                payload = json.loads(relevance_path.read_text(encoding="utf-8"))
+                image_scores = payload.get("image_scores") or []
+                if image_scores:
+                    image_score_avg = round(
+                        sum(float(item.get("score") or 0.0) for item in image_scores)
+                        / len(image_scores),
+                        4,
+                    )
+                    manual_image_count = sum(
+                        1 for item in image_scores if item.get("result") != AgentResult.PASS.value
+                    )
+            except Exception:  # noqa: BLE001
+                image_score_avg = 0.0
+                manual_image_count = 0
         tables_path = node_dir / "tables.json"
         if tables_path.exists():
             try:
@@ -856,6 +906,8 @@ class NodeRunner:
             "progress": node.progress,
             "word_count": word_count,
             "grounded_ratio": grounded_ratio,
+            "image_score_avg": image_score_avg,
+            "manual_image_count": manual_image_count,
             "table_count": table_count,
             "consistency_issue_count": consistency_issue_count,
             "image_manual_required": node.image_manual_required,
@@ -889,6 +941,34 @@ class NodeRunner:
         if not path.exists():
             return None
         return FactCheck.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    @staticmethod
+    def _load_node_text(node_dir: Path) -> NodeText:
+        path = node_dir / "text.json"
+        if not path.exists():
+            raise RuntimeError("text.json missing")
+        return NodeText.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    @staticmethod
+    def _load_entity_extraction(node_dir: Path) -> EntityExtraction:
+        path = node_dir / "entities.json"
+        if not path.exists():
+            raise RuntimeError("entities.json missing before image verification")
+        return EntityExtraction.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    @staticmethod
+    def _load_image_prompts(node_dir: Path) -> ImagePrompts:
+        path = node_dir / "image_prompts.json"
+        if not path.exists():
+            raise RuntimeError("image_prompts.json missing before image verification")
+        return ImagePrompts.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    @staticmethod
+    def _load_images_artifact(node_dir: Path) -> ImagesArtifact:
+        path = node_dir / "images.json"
+        if not path.exists():
+            raise RuntimeError("images.json missing before image verification")
+        return ImagesArtifact.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     @staticmethod
     def _load_json_if_exists(path: Path) -> dict[str, Any] | None:
@@ -942,22 +1022,249 @@ class NodeRunner:
             )
         return path
 
-    def _write_stub_images_artifact(self, node: NodeState, node_dir: Path) -> Path:
+    def _write_image_generate_artifact(self, node: NodeState, node_dir: Path) -> Path:
+        text_path = node_dir / "text.json"
+        if not text_path.exists():
+            raise RuntimeError("text.json missing before entity extraction")
+
+        fact_check = self._load_fact_check(node_dir)
+        if fact_check is None or fact_check.result != AgentResult.PASS:
+            raise RuntimeError("fact_check.json missing or failed before image generation")
+
+        node_text = self._load_node_text(node_dir)
+        entities = self.entity_extractor.extract(node_text=node_text, fact_check=fact_check)
+        prompts = self.image_prompt.build(entities=entities, node_text=node_text)
+        images = ImagesArtifact(node_uid=node.node_uid, images=[])
+        provider_config = self._image_provider_config(node.task_id)
+
+        for prompt in prompts.prompts:
+            generated = self.image_generation.generate(
+                prompt_item=prompt,
+                node_dir=node_dir,
+                retry_count=0,
+                provider_config=provider_config,
+            )
+            images.images.append(generated)
+            resolved_model = (
+                provider_config.get("_resolved_image_model_name")
+                or provider_config.get("image_model_name")
+                or "placeholder"
+            )
+            fallback_from = provider_config.get("_image_model_fallback_from")
+            if fallback_from and fallback_from != resolved_model:
+                self._log(
+                    node.task_id,
+                    node_uid=node.node_uid,
+                    stage="IMAGE_MODEL_FALLBACK",
+                    status=EventStatus.WARNING,
+                    message=f"Switched image model from {fallback_from} to {resolved_model} after provider error.",
+                    meta_json={
+                        "image_id": generated.image_id,
+                        "provider": provider_config.get("image_provider") or "mock",
+                        "fallback_from": fallback_from,
+                        "fallback_to": resolved_model,
+                        "attempted_models": provider_config.get("_image_model_attempts") or [],
+                    },
+                )
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="IMAGE_PROVIDER",
+                status=EventStatus.INFO,
+                message=(
+                    f"Generated {generated.image_id} with "
+                    f"{provider_config.get('image_provider') or 'mock'}:"
+                    f"{resolved_model}"
+                ),
+                output_artifact_path=str(node_dir / generated.file),
+                meta_json={
+                    "image_id": generated.image_id,
+                    "provider": provider_config.get("image_provider") or "mock",
+                    "model": resolved_model,
+                    "selected_model": provider_config.get("image_model_name") or "placeholder",
+                    "attempted_models": provider_config.get("_image_model_attempts") or [],
+                    "fallback_from": provider_config.get("_image_model_fallback_from"),
+                },
+            )
+
+        self._write_json(
+            node_dir / "entities.json",
+            entities.model_dump(mode="json"),
+        )
+        self._write_json(
+            node_dir / "image_prompts.json",
+            prompts.model_dump(mode="json"),
+        )
         path = node_dir / "images.json"
-        self._write_json(path, {"node_uid": node.node_uid, "images": []})
+        self._write_json(path, images.model_dump(mode="json"))
+
+        node.image_manual_required = False
+        node.manual_action_status = ManualActionStatus.NONE
         return path
 
-    def _write_stub_image_verify_artifact(self, node: NodeState, node_dir: Path) -> Path:
-        path = node_dir / "image_relevance.json"
-        self._write_json(
-            path,
-            {
-                "node_uid": node.node_uid,
-                "image_scores": [],
-                "overall_result": "PASS",
-            },
+    def _write_image_verify_artifact(self, node: NodeState, node_dir: Path) -> Path:
+        node_text = self._load_node_text(node_dir)
+        entities = self._load_entity_extraction(node_dir)
+        prompts = self._load_image_prompts(node_dir)
+        images = self._load_images_artifact(node_dir)
+        provider_config = self._image_provider_config(node.task_id)
+
+        node.image_manual_required = False
+        node.manual_action_status = ManualActionStatus.NONE
+
+        prompt_index = {item.prompt_id: item for item in prompts.prompts}
+        score_items: list[ImageScoreItem] = []
+
+        for image_index, image in enumerate(images.images):
+            current_image = image
+            current_prompt = prompt_index.get(current_image.prompt_id or "")
+
+            while True:
+                single_report = self.image_relevance.evaluate(
+                    node_text=node_text,
+                    entities=entities,
+                    images=ImagesArtifact(node_uid=node.node_uid, images=[current_image]),
+                )
+                score_item = single_report.image_scores[0]
+
+                if score_item.result == AgentResult.PASS:
+                    current_image.status = ImageStatus.PASS
+                    images.images[image_index] = current_image
+                    score_items.append(score_item)
+                    break
+
+                if current_image.retry_count < self.image_retry_limit and current_prompt is not None:
+                    retry_no = current_image.retry_count + 1
+                    self._increment_retry(node, "retry_image")
+                    current_prompt = self.image_prompt.strengthen_prompt(
+                        current_prompt,
+                        missing_elements=score_item.missing_elements,
+                        retry_no=retry_no,
+                    )
+                    prompt_index[current_prompt.prompt_id] = current_prompt
+                    current_image = self.image_generation.generate(
+                        prompt_item=current_prompt,
+                        node_dir=node_dir,
+                        retry_count=retry_no,
+                        provider_config=provider_config,
+                    )
+                    current_image.status = ImageStatus.RETRYING
+                    images.images[image_index] = current_image
+                    self._write_json(
+                        node_dir / "image_prompts.json",
+                        ImagePrompts(
+                            node_uid=node.node_uid,
+                            prompts=[
+                                prompt_index[item.prompt_id]
+                                for item in prompts.prompts
+                                if item.prompt_id in prompt_index
+                            ],
+                        ).model_dump(mode="json"),
+                    )
+                    self._write_json(
+                        node_dir / "images.json",
+                        images.model_dump(mode="json"),
+                    )
+                    self._log(
+                        node.task_id,
+                        node_uid=node.node_uid,
+                        stage="IMAGE_RETRY",
+                        status=EventStatus.WARNING,
+                        message=(
+                            f"Retry image {current_image.image_id} "
+                            f"{retry_no}/{self.image_retry_limit}"
+                        ),
+                        output_artifact_path=str(node_dir / current_image.file),
+                        retry_count=node.retry_image,
+                        meta_json={
+                            "image_id": current_image.image_id,
+                            "missing_elements": score_item.missing_elements,
+                            "score": score_item.score,
+                            "score_threshold": self.image_score_threshold,
+                        },
+                    )
+                    continue
+
+                current_image.status = ImageStatus.NEED_MANUAL_CONFIRM
+                images.images[image_index] = current_image
+                node.image_manual_required = True
+                node.manual_action_status = ManualActionStatus.PENDING
+                score_items.append(
+                    ImageScoreItem(
+                        image_id=current_image.image_id,
+                        score=score_item.score,
+                        missing_elements=score_item.missing_elements,
+                        result=AgentResult.FAIL,
+                    )
+                )
+                self._log(
+                    node.task_id,
+                    node_uid=node.node_uid,
+                    stage="IMAGE_MANUAL",
+                    status=EventStatus.WARNING,
+                    message=(
+                        f"Image {current_image.image_id} exceeded retry limit and needs manual confirm."
+                    ),
+                    output_artifact_path=str(node_dir / current_image.file),
+                    retry_count=node.retry_image,
+                    meta_json={
+                        "image_id": current_image.image_id,
+                        "missing_elements": score_item.missing_elements,
+                        "score": score_item.score,
+                        "score_threshold": self.image_score_threshold,
+                    },
+                )
+                break
+
+        updated_prompts = ImagePrompts(
+            node_uid=node.node_uid,
+            prompts=[
+                prompt_index[item.prompt_id]
+                for item in prompts.prompts
+                if item.prompt_id in prompt_index
+            ],
         )
+        relevance_report = ImageRelevanceReport(
+            node_uid=node.node_uid,
+            image_scores=score_items,
+            overall_result=(
+                AgentResult.PASS
+                if all(item.result == AgentResult.PASS for item in score_items)
+                else AgentResult.FAIL
+            ),
+        )
+
+        self._write_json(
+            node_dir / "image_prompts.json",
+            updated_prompts.model_dump(mode="json"),
+        )
+        self._write_json(
+            node_dir / "images.json",
+            images.model_dump(mode="json"),
+        )
+        path = node_dir / "image_relevance.json"
+        self._write_json(path, relevance_report.model_dump(mode="json"))
+
+        if node.image_manual_required:
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="IMAGE_LENIENT",
+                status=EventStatus.WARNING,
+                message="Image pipeline finished in lenient mode; manual confirm required.",
+                output_artifact_path=str(path),
+                retry_count=node.retry_image,
+                meta_json={"score_threshold": self.image_score_threshold},
+            )
         return path
+
+    def _image_provider_config(self, task_id: str) -> dict[str, Any]:
+        config = dict(self.system_config_getter() or {})
+        task = self.task_repository.get(task_id)
+        if task is not None:
+            config.setdefault("image_provider", task.image_provider)
+            config.setdefault("text_provider", task.text_provider)
+        return config
 
     def _write_length_artifact(self, node: NodeState, node_dir: Path) -> Path:
         text_path = node_dir / "text.json"
@@ -1064,13 +1371,13 @@ class NodeRunner:
         return path
 
     def _write_layout_artifact(self, node: NodeState, node_dir: Path) -> Path:
-        path = node_dir / "layout_blocks.json"
+        path = node_dir / "layout_ready.json"
         self._write_json(
             path,
             {
                 "node_uid": node.node_uid,
                 "node_id": node.node_id,
-                "layout": "READY",
+                "layout_status": "READY_FOR_TASK_LAYOUT",
                 "generated_at": utc_now_iso(),
             },
         )
@@ -1087,12 +1394,23 @@ class NodeRunner:
         if fact_path.exists():
             payload = json.loads(fact_path.read_text(encoding="utf-8"))
             grounded_ratio = float(payload.get("grounded_ratio") or 0.0)
+        image_score_avg = 0.0
+        relevance_path = node_dir / "image_relevance.json"
+        if relevance_path.exists():
+            payload = json.loads(relevance_path.read_text(encoding="utf-8"))
+            image_scores = payload.get("image_scores") or []
+            if image_scores:
+                image_score_avg = round(
+                    sum(float(item.get("score") or 0.0) for item in image_scores)
+                    / len(image_scores),
+                    4,
+                )
 
         artifact = Metrics(
             node_uid=node.node_uid,
             word_count=word_count,
             grounded_ratio=grounded_ratio,
-            image_score_avg=1.0,
+            image_score_avg=image_score_avg,
             image_retry_total=node.retry_image,
             text_retry_total=node.retry_text,
             fact_retry_total=node.retry_fact,
@@ -1103,15 +1421,12 @@ class NodeRunner:
         self._write_json(path, artifact.model_dump(mode="json"))
         return path
 
-    def _export_output(self, task_id: str) -> Path:
-        output_dir = self.artifacts_root / task_id / "final"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "output.docx"
-        if self.template_path.exists():
-            shutil.copyfile(self.template_path, output_path)
-        else:
-            output_path.write_bytes(b"")
-        return output_path
+    def _load_confirmed_toc(self, task_id: str) -> TOCDocument:
+        path = self.artifacts_root / task_id / "toc" / "toc_confirmed.json"
+        if not path.exists():
+            raise RuntimeError(f"toc_confirmed.json missing for task {task_id}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return TOCDocument.model_validate(payload)
 
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:

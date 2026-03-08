@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   API_BASE,
-  confirmToc,
+  confirmAndStartGeneration,
   createTask,
   generateToc,
+  getHealth,
+  getSystemConfig,
   listLogs,
   listNodes,
   getParseReport,
@@ -12,12 +14,34 @@ import {
   listChat,
   listTasks,
   listTocVersions,
-  parseRequirement,
+  outputUrl,
   reviewToc,
-  startGeneration,
+  updateSystemConfig,
   uploadDocx
 } from "./api";
 import "./styles.css";
+
+const TEXT_MODEL_OPTIONS = [
+  { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" }
+];
+
+const IMAGE_MODEL_OPTIONS = [
+  { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" },
+  { label: "Doubao-Seedream-5.0-lite", modelName: "Doubao-Seedream-5.0-lite", provider: "doubao" },
+  { label: "Doubao-Seedream-4.5", modelName: "Doubao-Seedream-4.5", provider: "doubao" },
+  { label: "Doubao-Seed3D-1.0", modelName: "Doubao-Seed3D-1.0", provider: "doubao" },
+  { label: "Doubao-Seedream-4.0", modelName: "Doubao-Seedream-4.0", provider: "doubao" },
+  { label: "Doubao-Seedream-3.0-t2i", modelName: "Doubao-Seedream-3.0-t2i", provider: "doubao" }
+];
+
+const DEFAULT_SYSTEM_CONFIG = {
+  text_provider: TEXT_MODEL_OPTIONS[0].provider,
+  image_provider: IMAGE_MODEL_OPTIONS[0].provider,
+  text_model_name: TEXT_MODEL_OPTIONS[0].modelName,
+  image_model_name: IMAGE_MODEL_OPTIONS[0].modelName,
+  text_api_key: "",
+  image_api_key: ""
+};
 
 const STATUS_CN = {
   NEW: "新建",
@@ -28,11 +52,115 @@ const STATUS_CN = {
   EXPORTING: "导出中",
   DONE: "已完成",
   PAUSED: "已暂停",
-  FAILED: "失败"
+  FAILED: "失败",
+  PENDING: "待执行",
+  TEXT_GENERATING: "正文生成中",
+  TEXT_DONE: "正文已完成",
+  FACT_CHECKING: "事实校验中",
+  FACT_PASSED: "事实通过",
+  IMAGE_GENERATING: "图片生成中",
+  IMAGE_DONE: "图片已生成",
+  IMAGE_VERIFYING: "图文校验中",
+  IMAGE_VERIFIED: "图片校验完成",
+  LENGTH_CHECKING: "字数检查中",
+  LENGTH_PASSED: "字数通过",
+  CONSISTENCY_CHECKING: "一致性检查中",
+  READY_FOR_LAYOUT: "待排版",
+  LAYOUTED: "已进入排版",
+  NODE_DONE: "节点完成",
+  NODE_FAILED: "节点失败",
+  WAITING_MANUAL: "等待人工处理"
 };
 
 function statusCn(status) {
   return STATUS_CN[status] || status || "-";
+}
+
+function manualActionText(status) {
+  if (!status || status === "NONE") {
+    return "无";
+  }
+  if (status === "PENDING") {
+    return "待人工确认";
+  }
+  if (status === "CONFIRMED") {
+    return "已确认";
+  }
+  if (status === "SKIPPED") {
+    return "已跳过";
+  }
+  if (status === "REGENERATED") {
+    return "已重生成";
+  }
+  if (status === "FAILED") {
+    return "人工处理失败";
+  }
+  return status;
+}
+
+function imageWarningText(node) {
+  if (node.image_manual_required) {
+    return "图片需人工确认";
+  }
+  if (node.manual_action_status && node.manual_action_status !== "NONE") {
+    return `人工状态：${manualActionText(node.manual_action_status)}`;
+  }
+  return "-";
+}
+
+function countTocNodes(nodes) {
+  if (!nodes || nodes.length === 0) {
+    return 0;
+  }
+  return nodes.reduce(
+    (total, node) => total + 1 + countTocNodes(node.children || []),
+    0
+  );
+}
+
+function getVisibleTocNodes(nodes) {
+  if (!nodes || nodes.length === 0) {
+    return [];
+  }
+  if (nodes.length === 1 && nodes[0].level === 1 && Array.isArray(nodes[0].children)) {
+    return nodes[0].children;
+  }
+  return nodes;
+}
+
+function displayNodeId(nodeId) {
+  if (!nodeId) {
+    return "";
+  }
+  if (nodeId.startsWith("1.")) {
+    return nodeId.slice(2);
+  }
+  return nodeId;
+}
+
+function normalizeSystemConfig(config) {
+  const textOption =
+    TEXT_MODEL_OPTIONS.find((item) => item.modelName === config?.text_model_name) ||
+    TEXT_MODEL_OPTIONS.find((item) => item.provider === config?.text_provider) ||
+    TEXT_MODEL_OPTIONS[0];
+
+  const imageOption =
+    IMAGE_MODEL_OPTIONS.find((item) => item.modelName === config?.image_model_name) ||
+    IMAGE_MODEL_OPTIONS.find((item) => item.provider === config?.image_provider) ||
+    IMAGE_MODEL_OPTIONS[0];
+
+  const legacyApiKey = typeof config?.api_key === "string" ? config.api_key : "";
+
+  return {
+    text_provider: textOption.provider,
+    image_provider: imageOption.provider,
+    text_model_name: textOption.modelName,
+    image_model_name: imageOption.modelName,
+    text_api_key:
+      typeof config?.text_api_key === "string" ? config.text_api_key : legacyApiKey,
+    image_api_key:
+      typeof config?.image_api_key === "string" ? config.image_api_key : legacyApiKey
+  };
 }
 
 function TocTree({ nodes }) {
@@ -45,7 +173,7 @@ function TocTree({ nodes }) {
       {nodes.map((node) => (
         <li key={node.node_uid}>
           <span>
-            {node.node_id} {node.title}
+            {displayNodeId(node.node_id)} {node.title}
             {node.is_generation_unit ? <strong className="tag"> 生成单元</strong> : null}
           </span>
           {node.children?.length ? <TocTree nodes={node.children} /> : null}
@@ -55,7 +183,13 @@ function TocTree({ nodes }) {
   );
 }
 
+function upsertTocVersion(versions, nextVersion) {
+  const filtered = versions.filter((item) => item.version_no !== nextVersion.version_no);
+  return [nextVersion, ...filtered].sort((a, b) => b.version_no - a.version_no);
+}
+
 export default function App() {
+  const [systemConfig, setSystemConfig] = useState(DEFAULT_SYSTEM_CONFIG);
   const [tasks, setTasks] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("目录审阅任务");
@@ -72,6 +206,11 @@ export default function App() {
   const [recentLogs, setRecentLogs] = useState([]);
 
   const [loading, setLoading] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("");
+  const [busySince, setBusySince] = useState(0);
+  const [switchingVersionNo, setSwitchingVersionNo] = useState(0);
+  const [apiHealthy, setApiHealthy] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -84,13 +223,66 @@ export default function App() {
     () => tocVersions.find((item) => item.version_no === selectedVersionNo) || null,
     [tocVersions, selectedVersionNo]
   );
+  const visibleTocNodes = useMemo(() => getVisibleTocNodes(tocDoc?.tree || []), [tocDoc]);
 
   const canReviewToc = selectedTask?.status === "TOC_REVIEW";
+  const tocNodeCount = useMemo(() => countTocNodes(visibleTocNodes), [visibleTocNodes]);
+  const tocPreviewHeight = useMemo(
+    () => Math.min(820, Math.max(280, tocNodeCount * 34)),
+    [tocNodeCount]
+  );
+  const canBuildToc =
+    !!selectedTaskId &&
+    (
+      (selectedTask?.status === "NEW" && !!selectedTask?.upload_file_name) ||
+      selectedTask?.status === "PARSED"
+    );
+  const buildTocLabel =
+    selectedTask?.status === "NEW"
+      ? "1. 解析需求并生成目录（NEW -> TOC_REVIEW）"
+      : "1. 生成目录（PARSED -> TOC_REVIEW）";
+  const workerRuntimeHint = useMemo(() => {
+    if (!selectedTask) {
+      return null;
+    }
+    if (!["GENERATING", "LAYOUTING", "EXPORTING"].includes(selectedTask.status)) {
+      return null;
+    }
+    if (!selectedTask.last_heartbeat_at) {
+      return {
+        level: "warning",
+        text: "任务正在执行，但尚未收到心跳。请确认 worker 已启动。"
+      };
+    }
 
-  async function withAction(fn, successMessage = "") {
+    const heartbeatTime = new Date(selectedTask.last_heartbeat_at).getTime();
+    if (Number.isNaN(heartbeatTime)) {
+      return {
+        level: "warning",
+        text: "任务心跳时间不可解析，请检查后端状态。"
+      };
+    }
+
+    const idleSeconds = Math.floor((Date.now() - heartbeatTime) / 1000);
+    if (idleSeconds >= 15) {
+      return {
+        level: "warning",
+        text: `任务处于 ${statusCn(selectedTask.status)}，但已经 ${idleSeconds} 秒没有心跳更新，可能中断或 worker 卡住。`
+      };
+    }
+
+    return {
+      level: "info",
+      text: `任务正在 ${statusCn(selectedTask.status)}，最近一次心跳是 ${idleSeconds} 秒前。`
+    };
+  }, [selectedTask, nodeStates, tasks]);
+
+  async function withAction(fn, successMessage = "", activityLabel = "处理中") {
     setError("");
     setMessage("");
     setLoading(true);
+    setBusyLabel(activityLabel);
+    setBusySince(Date.now());
     try {
       const result = await fn();
       if (successMessage) setMessage(successMessage);
@@ -100,21 +292,46 @@ export default function App() {
       return null;
     } finally {
       setLoading(false);
+      setBusyLabel("");
+      setBusySince(0);
     }
   }
 
   async function loadTasks(defaultTaskId = "") {
-    const result = await withAction(() => listTasks());
-    if (!result) return;
-    setTasks(result);
+    try {
+      const result = await listTasks();
+      setTasks(result);
 
-    if (defaultTaskId) {
-      setSelectedTaskId(defaultTaskId);
-      return;
+      if (defaultTaskId) {
+        setSelectedTaskId(defaultTaskId);
+        return;
+      }
+
+      if (!selectedTaskId && result.length > 0) {
+        setSelectedTaskId(result[0].task_id);
+      }
+    } catch (err) {
+      setError(err.message || "任务列表加载失败");
     }
+  }
 
-    if (!selectedTaskId && result.length > 0) {
-      setSelectedTaskId(result[0].task_id);
+  async function loadSystemConfigState() {
+    try {
+      const result = await getSystemConfig();
+      setSystemConfig(normalizeSystemConfig(result));
+    } catch (err) {
+      setError(err.message || "系统配置加载失败");
+    }
+  }
+
+  async function checkApiHealth() {
+    try {
+      await getHealth();
+      setApiHealthy(true);
+      return true;
+    } catch {
+      setApiHealthy(false);
+      return false;
     }
   }
 
@@ -145,7 +362,10 @@ export default function App() {
     }
     setTocVersions(versions);
 
-    let targetVersionNo = preferredVersionNo;
+    let targetVersionNo = preferredVersionNo || selectedVersionNo;
+    if (targetVersionNo && !versions.some((item) => item.version_no === targetVersionNo)) {
+      targetVersionNo = 0;
+    }
     if (!targetVersionNo && versions.length > 0) {
       targetVersionNo = versions[0].version_no;
     }
@@ -200,6 +420,8 @@ export default function App() {
 
   useEffect(() => {
     loadTasks();
+    loadSystemConfigState();
+    checkApiHealth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -211,17 +433,34 @@ export default function App() {
   useEffect(() => {
     if (!selectedTaskId) return undefined;
     const timer = window.setInterval(() => {
+      if (loading || configSaving) {
+        return;
+      }
+      checkApiHealth();
       loadRuntimeData(selectedTaskId);
       listTasks()
         .then((items) => setTasks(items))
         .catch(() => {});
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [selectedTaskId]);
+  }, [selectedTaskId, loading, configSaving]);
+
+  useEffect(() => {
+    if (selectedTaskId) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      if (loading || configSaving) {
+        return;
+      }
+      checkApiHealth();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [selectedTaskId, loading, configSaving]);
 
   async function handleCreateTask(event) {
     event.preventDefault();
-    const created = await withAction(() => createTask(newTaskTitle), "任务已创建");
+    const created = await withAction(() => createTask(newTaskTitle), "任务已创建", "正在创建任务");
     if (!created) return;
     await loadTasks(created.task_id);
     await loadTaskContext(created.task_id);
@@ -254,24 +493,12 @@ export default function App() {
       return;
     }
 
-    const result = await withAction(() => uploadDocx(selectedTaskId, file), "上传成功");
-    if (!result) return;
-    await refreshCurrentTask();
-  }
-
-  async function handleParse() {
-    if (!selectedTaskId) {
-      setError("请先选择任务");
-      return;
-    }
-
     const result = await withAction(
-      () => parseRequirement(selectedTaskId),
-      "解析完成，已生成 requirement.json 与 parse_report.json"
+      () => uploadDocx(selectedTaskId, file),
+      "上传成功",
+      "正在上传 .docx 文件"
     );
     if (!result) return;
-
-    setParseReport(result.parse_report || null);
     await refreshCurrentTask();
   }
 
@@ -280,18 +507,41 @@ export default function App() {
       setError("请先选择任务");
       return;
     }
+    if (selectedTask?.status === "NEW" && !selectedTask?.upload_file_name) {
+      setError("请先上传 .docx 文件");
+      return;
+    }
 
-    const result = await withAction(() => generateToc(selectedTaskId), "目录 toc_v1 已生成");
+    const successMessage =
+      selectedTask?.status === "NEW"
+        ? "需求解析完成，目录已生成"
+        : "目录已生成";
+    const activityLabel =
+      selectedTask?.status === "NEW"
+        ? "正在解析需求并生成目录"
+        : "正在生成目录";
+    const result = await withAction(
+      () => generateToc(selectedTaskId),
+      successMessage,
+      activityLabel
+    );
     if (!result) return;
     await refreshCurrentTask(result.version_no);
   }
 
   async function handleSwitchVersion(versionNo) {
     if (!selectedTaskId || !versionNo) return;
-    const doc = await withAction(() => getToc(selectedTaskId, versionNo));
-    if (!doc) return;
-    setSelectedVersionNo(versionNo);
-    setTocDoc(doc);
+    setError("");
+    setSwitchingVersionNo(versionNo);
+    try {
+      const doc = await getToc(selectedTaskId, versionNo);
+      setSelectedVersionNo(versionNo);
+      setTocDoc(doc);
+    } catch (err) {
+      setError(err.message || "目录版本加载失败");
+    } finally {
+      setSwitchingVersionNo(0);
+    }
   }
 
   async function handleReviewToc(event) {
@@ -307,12 +557,36 @@ export default function App() {
 
     const result = await withAction(
       () => reviewToc(selectedTaskId, feedback.trim(), selectedVersionNo),
-      `已生成 toc_v${(tocVersions[0]?.version_no || 0) + 1}`
+      `已生成 toc_v${(tocVersions[0]?.version_no || 0) + 1}`,
+      "正在生成新的目录版本"
     );
     if (!result) return;
 
     setFeedback("");
-    await refreshCurrentTask(result.version_no);
+
+    if (result.toc_document) {
+      setSelectedVersionNo(result.version_no);
+      setTocDoc(result.toc_document);
+    }
+    setTocVersions((current) => upsertTocVersion(current, {
+      toc_version_id: result.toc_version_id,
+      task_id: result.task_id,
+      version_no: result.version_no,
+      file_path: result.file_path,
+      based_on_version_no: result.based_on_version_no,
+      is_confirmed: result.is_confirmed,
+      diff_summary_json: result.diff_summary_json,
+      created_by: result.created_by,
+      created_at: result.created_at
+    }));
+
+    await loadTasks(selectedTaskId);
+    try {
+      const messages = await listChat(selectedTaskId);
+      setChatMessages(messages);
+    } catch {
+      // Chat refresh is best-effort after review.
+    }
   }
 
   async function handleConfirmAndStart() {
@@ -321,17 +595,83 @@ export default function App() {
       return;
     }
 
-    const confirmed = await withAction(
-      () => confirmToc(selectedTaskId, selectedVersionNo),
-      "目录已确认并冻结"
+    const result = await withAction(
+      () => confirmAndStartGeneration(selectedTaskId, selectedVersionNo),
+      "目录已确认并已提交后台生成任务",
+      "正在确认目录并开始生成内容"
     );
-    if (!confirmed) return;
+    if (!result) return;
 
-    await withAction(
-      () => startGeneration(selectedTaskId),
-      "已提交后台 Worker，请确保 worker 进程正在运行"
-    );
+    if (result.task) {
+      setTasks((current) =>
+        current.map((item) => (item.task_id === result.task.task_id ? result.task : item))
+      );
+    }
     await refreshCurrentTask(selectedVersionNo);
+  }
+
+  function handleSystemConfigChange(field, value) {
+    if (field === "text_model_name") {
+      const option = TEXT_MODEL_OPTIONS.find((item) => item.modelName === value) || TEXT_MODEL_OPTIONS[0];
+      setSystemConfig((current) => ({
+        ...current,
+        text_model_name: option.modelName,
+        text_provider: option.provider
+      }));
+      return;
+    }
+
+    if (field === "image_model_name") {
+      const option = IMAGE_MODEL_OPTIONS.find((item) => item.modelName === value) || IMAGE_MODEL_OPTIONS[0];
+      setSystemConfig((current) => ({
+        ...current,
+        image_model_name: option.modelName,
+        image_provider: option.provider
+      }));
+      return;
+    }
+
+    setSystemConfig((current) => ({
+      ...current,
+      [field]: value
+    }));
+  }
+
+  async function handleSaveSystemConfig(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setBusyLabel("正在检查后端服务");
+    setBusySince(Date.now());
+    const healthy = await checkApiHealth();
+    if (!healthy) {
+      setBusyLabel("");
+      setBusySince(0);
+      setError("后端 API 不可用，请启动或重启 uvicorn backend.api.main:app");
+      return;
+    }
+
+    setConfigSaving(true);
+    setBusyLabel("正在保存系统配置");
+    setBusySince(Date.now());
+    try {
+      const saved = await updateSystemConfig({
+        text_provider: systemConfig.text_provider,
+        image_provider: systemConfig.image_provider,
+        text_model_name: systemConfig.text_model_name,
+        image_model_name: systemConfig.image_model_name,
+        text_api_key: systemConfig.text_api_key,
+        image_api_key: systemConfig.image_api_key
+      });
+      setSystemConfig(normalizeSystemConfig(saved));
+      setMessage("系统配置已保存");
+    } catch (err) {
+      setError(err.message || "系统配置保存失败");
+    } finally {
+      setConfigSaving(false);
+      setBusyLabel("");
+      setBusySince(0);
+    }
   }
 
   const diffSummary = selectedVersion?.diff_summary_json;
@@ -340,13 +680,115 @@ export default function App() {
   return (
     <div className="page">
       <header className="header">
-        <h1>Multi-Agent 文档生成系统（第 4 轮：目录闭环）</h1>
-        <p>实现上传、解析、目录版本化修订、目录冻结与生成启动约束。</p>
+        <h1>Multi-Agent 文档生成系统</h1>
+        <p>当前页面覆盖系统配置、上传、解析、目录冻结、后台生成和最终 output.docx 下载。</p>
         <p>API: {API_BASE}</p>
       </header>
 
+      {!apiHealthy ? (
+        <div className="banner error">
+          后端 API 当前不可用。请启动或重启 `uvicorn backend.api.main:app --reload --host 0.0.0.0 --port 8000`
+        </div>
+      ) : null}
+
+      {(loading || configSaving) && busyLabel ? (
+        <div className="loading-overlay" role="status" aria-live="polite">
+          <div className="loading-box">
+            <div className="loading-spinner" />
+            <div>
+              <strong>{busyLabel}</strong>
+              <p>请等待当前动作完成。若长时间无响应，请检查 API 或 Worker 进程。</p>
+              {busySince ? (
+                <p className="muted-note">
+                  已持续 {Math.max(1, Math.floor((Date.now() - busySince) / 1000))} 秒
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {message ? <div className="banner success">{message}</div> : null}
       {error ? <div className="banner error">{error}</div> : null}
+
+      <section className="card config-card">
+        <details className="config-panel">
+          <summary className="config-summary">
+            <div>
+              <h2>系统配置区</h2>
+              <p>选择文本模型、图片模型及各自 API Key，保存到本地系统配置。</p>
+            </div>
+            <span className="summary-meta">
+              文本：{systemConfig.text_model_name} | 图片：{systemConfig.image_model_name}
+            </span>
+          </summary>
+
+          <form className="stack config-form" onSubmit={handleSaveSystemConfig}>
+            <div className="grid-2">
+              <label>
+                文本模型
+                <select
+                  value={systemConfig.text_model_name}
+                  onChange={(e) => handleSystemConfigChange("text_model_name", e.target.value)}
+                  disabled={configSaving}
+                >
+                  {TEXT_MODEL_OPTIONS.map((item) => (
+                    <option key={item.modelName} value={item.modelName}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                图片模型
+                <select
+                  value={systemConfig.image_model_name}
+                  onChange={(e) => handleSystemConfigChange("image_model_name", e.target.value)}
+                  disabled={configSaving}
+                >
+                  {IMAGE_MODEL_OPTIONS.map((item) => (
+                    <option key={item.modelName} value={item.modelName}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="full-width">
+                文本模型 API Key
+                <input
+                  type="password"
+                  value={systemConfig.text_api_key}
+                  onChange={(e) => handleSystemConfigChange("text_api_key", e.target.value)}
+                  placeholder="输入文本模型 API Key"
+                  autoComplete="off"
+                  disabled={configSaving}
+                />
+              </label>
+
+              <label className="full-width">
+                图片模型 API Key
+                <input
+                  type="password"
+                  value={systemConfig.image_api_key}
+                  onChange={(e) => handleSystemConfigChange("image_api_key", e.target.value)}
+                  placeholder="输入图片模型 API Key"
+                  autoComplete="off"
+                  disabled={configSaving}
+                />
+              </label>
+            </div>
+
+            <div className="config-actions">
+              <span className="muted-note">保存后，新建任务会默认继承当前系统配置。</span>
+              <button type="submit" disabled={configSaving}>
+                {configSaving ? "保存中..." : "保存配置"}
+              </button>
+            </div>
+          </form>
+        </details>
+      </section>
 
       <section className="card">
         <h2>任务与上传</h2>
@@ -405,24 +847,17 @@ export default function App() {
         <div className="actions">
           <button
             type="button"
-            onClick={handleParse}
-            disabled={loading || !selectedTaskId || selectedTask?.status !== "NEW"}
-          >
-            1. 执行 Requirement 解析（NEW -&gt; PARSED）
-          </button>
-          <button
-            type="button"
             onClick={handleGenerateToc}
-            disabled={loading || !selectedTaskId || selectedTask?.status !== "PARSED"}
+            disabled={loading || !canBuildToc}
           >
-            2. 生成目录（PARSED -&gt; TOC_REVIEW）
+            {buildTocLabel}
           </button>
           <button
             type="button"
             onClick={handleConfirmAndStart}
             disabled={loading || !canReviewToc || !selectedVersionNo}
           >
-            3. 确认目录 / 开始生成内容
+            2. 确认目录 / 开始生成内容
           </button>
         </div>
       </section>
@@ -430,21 +865,56 @@ export default function App() {
       <section className="card">
         <h2>当前任务状态</h2>
         {selectedTask ? (
-          <div className="stats">
-            <div>任务ID：{selectedTask.task_id}</div>
-            <div>标题：{selectedTask.title}</div>
-            <div>状态：{statusCn(selectedTask.status)}</div>
-            <div>当前阶段：{selectedTask.current_stage || "-"}</div>
-            <div>当前节点：{selectedTask.current_node_uid || "-"}</div>
-            <div>确认目录版本：{selectedTask.confirmed_toc_version || "-"}</div>
-            <div>上传文件：{selectedTask.upload_file_name || "-"}</div>
-            <div>最近错误：{selectedTask.latest_error || "-"}</div>
-            <div>总进度：{Math.round((selectedTask.total_progress || 0) * 100)}%</div>
-            <div>
-              节点进度：{selectedTask.completed_nodes || 0}/{selectedTask.total_nodes || 0}
+          <>
+            {workerRuntimeHint ? (
+              <div className={`banner ${workerRuntimeHint.level}`}>
+                {workerRuntimeHint.text}
+              </div>
+            ) : null}
+            {nodeStates.some((node) => node.image_manual_required) ? (
+              <div className="banner warning">
+                存在图片需人工确认的节点。当前为宽松模式，任务仍可继续排版与导出；人工确认入口预留在节点状态区。
+              </div>
+            ) : null}
+            <div className="stats">
+              <div>任务ID：{selectedTask.task_id}</div>
+              <div>标题：{selectedTask.title}</div>
+              <div>状态：{statusCn(selectedTask.status)}</div>
+              <div>当前阶段：{selectedTask.current_stage || "-"}</div>
+              <div>当前节点：{selectedTask.current_node_uid || "-"}</div>
+              <div>确认目录版本：{selectedTask.confirmed_toc_version || "-"}</div>
+              <div>上传文件：{selectedTask.upload_file_name || "-"}</div>
+              <div>最近错误：{selectedTask.latest_error || "-"}</div>
+              <div>总进度：{Math.round((selectedTask.total_progress || 0) * 100)}%</div>
+              <div>
+                节点进度：{selectedTask.completed_nodes || 0}/{selectedTask.total_nodes || 0}
+              </div>
+              <div>任务心跳：{selectedTask.last_heartbeat_at || "-"}</div>
             </div>
-            <div>任务心跳：{selectedTask.last_heartbeat_at || "-"}</div>
-          </div>
+
+            <div className="output-panel">
+              <div>
+                <strong>输出文件</strong>
+                <p className="muted-note">
+                  稳定输出路径：artifacts/{selectedTask.task_id}/final/output.docx
+                </p>
+              </div>
+              {selectedTask.status === "DONE" ? (
+                <a
+                  className="download-link"
+                  href={outputUrl(selectedTask.task_id)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  下载 output.docx
+                </a>
+              ) : (
+                <p className="muted-note">
+                  任务完成后可下载最终 Word 文档。
+                </p>
+              )}
+            </div>
+          </>
         ) : (
           <p>请先选择任务。</p>
         )}
@@ -463,6 +933,7 @@ export default function App() {
                   <th>标题</th>
                   <th>状态</th>
                   <th>阶段</th>
+                  <th>图片告警</th>
                   <th>进度</th>
                   <th>心跳</th>
                 </tr>
@@ -470,10 +941,16 @@ export default function App() {
               <tbody>
                 {nodeStates.map((node) => (
                   <tr key={node.node_uid}>
-                    <td>{node.node_id}</td>
+                    <td>{displayNodeId(node.node_id)}</td>
                     <td>{node.title}</td>
-                    <td>{node.status}</td>
-                    <td>{node.current_stage || "-"}</td>
+                    <td>{statusCn(node.status)}</td>
+                    <td>{statusCn(node.current_stage)}</td>
+                    <td>
+                      <div>{imageWarningText(node)}</div>
+                      {node.image_manual_required ? (
+                        <span className="warn-tag">人工确认入口预留</span>
+                      ) : null}
+                    </td>
                     <td>{Math.round((node.progress || 0) * 100)}%</td>
                     <td>{node.last_heartbeat_at || "-"}</td>
                   </tr>
@@ -507,7 +984,7 @@ export default function App() {
           </p>
         ) : null}
 
-        <div className="layout">
+        <div className="layout toc-layout">
           <div>
             <h3>版本列表</h3>
             {tocVersions.length === 0 ? <p>暂无目录版本。</p> : null}
@@ -518,7 +995,7 @@ export default function App() {
                   type="button"
                   className={item.version_no === selectedVersionNo ? "version-btn active" : "version-btn"}
                   onClick={() => handleSwitchVersion(item.version_no)}
-                  disabled={loading}
+                  disabled={switchingVersionNo === item.version_no}
                 >
                   toc_v{item.version_no}
                   {item.is_confirmed ? "（已确认）" : ""}
@@ -558,7 +1035,12 @@ export default function App() {
 
           <div>
             <h3>目录树预览</h3>
-            {tocDoc?.tree ? <TocTree nodes={tocDoc.tree} /> : <p>请选择目录版本查看。</p>}
+            <div
+              className="toc-preview-panel"
+              style={{ minHeight: `${tocPreviewHeight}px` }}
+            >
+              {visibleTocNodes.length > 0 ? <TocTree nodes={visibleTocNodes} /> : <p>请选择目录版本查看。</p>}
+            </div>
           </div>
         </div>
       </section>

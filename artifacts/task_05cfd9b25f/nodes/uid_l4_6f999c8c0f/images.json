@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_6f999c8c0f",
+  "images": [
+    {
+      "image_id": "img_001",
+      "type": "process",
+      "file": "images/img_001.png",
+      "caption": "图001 换热能力与工况响应实施范围与目标process示意",
+      "group_caption": null,
+      "prompt_id": "prompt_001",
+      "must_have_elements": [
+        "换热能力与工况响应",
+        "换热能力与工况响应实施范围与目标",
+        "施工",
+        "现场"
+      ],
+      "bind_anchor": "anchor_uid_l4_6f999c8c0f_01",
+      "bind_section": "换热能力与工况响应实施范围与目标",
+      "retry_count": 1,
+      "status": "PASS"
+    },
+    {
+      "image_id": "img_002",
+      "type": "acceptance",
+      "file": "images/img_002.png",
+      "caption": "图002 换热能力与工况响应施工准备与资源配置acceptance示意",
+      "group_caption": null,
+      "prompt_id": "prompt_002",
+      "must_have_elements": [
+        "换热能力与工况响应",
+        "换热能力与工况响应实施范围与目标",
+        "施工",
+        "现场"
+      ],
+      "bind_anchor": "anchor_uid_l4_6f999c8c0f_02",
+      "bind_section": "换热能力与工况响应施工准备与资源配置",
+      "retry_count": 3,
+      "status": "NEED_MANUAL_CONFIRM"
+    }
+  ]
+}

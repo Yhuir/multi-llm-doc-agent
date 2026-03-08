@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from backend.models.schemas import (
@@ -16,7 +17,30 @@ from backend.models.schemas import (
 class TableBuilderAgent:
     """Build minimal tables only when structured expression is beneficial."""
 
-    DEFAULT_MAX_TABLES = 2
+    DEFAULT_MAX_TABLES = 1
+    MAX_ROWS_PER_TABLE = 8
+    GENERIC_TOPIC_TOKENS = {
+        "项目",
+        "系统",
+        "方案",
+        "实施",
+        "要求",
+        "技术",
+        "总体",
+        "内容",
+        "目标",
+        "范围",
+        "条件",
+        "控制",
+        "验收",
+        "安装",
+        "配置",
+        "设计",
+        "说明",
+        "响应",
+        "支持",
+        "其他",
+    }
 
     def build(
         self,
@@ -28,8 +52,13 @@ class TableBuilderAgent:
         prefs = table_preferences or {}
         max_tables = int(prefs.get("max_tables_per_node", self.DEFAULT_MAX_TABLES) or self.DEFAULT_MAX_TABLES)
         only_when_structured = bool(prefs.get("only_when_structured", True))
+        topic_keywords = self._node_topic_keywords(node_text)
 
-        candidates = self._build_candidates(node_text=node_text, requirement=requirement)
+        candidates = self._build_candidates(
+            node_text=node_text,
+            requirement=requirement,
+            topic_keywords=topic_keywords,
+        )
         tables: list[TableItem] = []
         for idx, candidate in enumerate(candidates, start=1):
             if len(tables) >= max(0, max_tables):
@@ -54,15 +83,28 @@ class TableBuilderAgent:
         *,
         node_text: NodeText,
         requirement: RequirementDocument,
+        topic_keywords: list[str],
     ) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        equipment = self._equipment_candidate(node_text=node_text, requirement=requirement)
+        equipment = self._equipment_candidate(
+            node_text=node_text,
+            requirement=requirement,
+            topic_keywords=topic_keywords,
+        )
         if equipment:
             candidates.append(equipment)
-        interface = self._interface_candidate(node_text=node_text, requirement=requirement)
+        interface = self._interface_candidate(
+            node_text=node_text,
+            requirement=requirement,
+            topic_keywords=topic_keywords,
+        )
         if interface:
             candidates.append(interface)
-        standards = self._standards_candidate(node_text=node_text, requirement=requirement)
+        standards = self._standards_candidate(
+            node_text=node_text,
+            requirement=requirement,
+            topic_keywords=topic_keywords,
+        )
         if standards:
             candidates.append(standards)
         return candidates
@@ -72,12 +114,18 @@ class TableBuilderAgent:
         *,
         node_text: NodeText,
         requirement: RequirementDocument,
+        topic_keywords: list[str],
     ) -> dict[str, Any] | None:
+        if not self._topic_supports_equipment_table(node_text.title, topic_keywords):
+            return None
         rows: list[list[str]] = []
         refs: list[str] = []
         location_hint = requirement.project.location or "现场指定位置"
+        seen_rows: set[tuple[str, str, str, str]] = set()
 
         for subsystem in requirement.scope.subsystems:
+            subsystem_topic = f"{subsystem.name} {subsystem.description}"
+            subsystem_related = self._matches_topic(subsystem_topic, topic_keywords)
             for item in subsystem.requirements:
                 key = item.key.strip()
                 value = item.value.strip()
@@ -85,9 +133,20 @@ class TableBuilderAgent:
                     continue
                 if not self._is_equipment_requirement(key=key, value=value):
                     continue
-                rows.append([subsystem.name or "-", key or "-", value or "-", location_hint])
+                combined = f"{subsystem.name} {key} {value}"
+                if not subsystem_related and not self._matches_topic(combined, topic_keywords):
+                    continue
+                row = (subsystem.name or "-", key or "-", value or "-", location_hint)
+                if row in seen_rows:
+                    continue
+                seen_rows.add(row)
+                rows.append(list(row))
                 if item.source_ref and item.source_ref not in refs:
                     refs.append(item.source_ref)
+                if len(rows) >= self.MAX_ROWS_PER_TABLE:
+                    break
+            if len(rows) >= self.MAX_ROWS_PER_TABLE:
+                break
 
         if len(rows) < 2:
             return None
@@ -109,14 +168,23 @@ class TableBuilderAgent:
         *,
         node_text: NodeText,
         requirement: RequirementDocument,
+        topic_keywords: list[str],
     ) -> dict[str, Any] | None:
+        if not self._topic_supports_interface_table(node_text.title, topic_keywords):
+            return None
         rows: list[list[str]] = []
         refs = self._collect_requirement_refs(requirement)[:4]
 
         for subsystem in requirement.scope.subsystems:
+            subsystem_related = self._matches_topic(
+                f"{subsystem.name} {subsystem.description}",
+                topic_keywords,
+            )
             for interface_name in subsystem.interfaces:
                 target = interface_name.strip()
                 if not target:
+                    continue
+                if not subsystem_related and not self._matches_topic(target, topic_keywords):
                     continue
                 rows.append(
                     [
@@ -126,6 +194,10 @@ class TableBuilderAgent:
                         "完成联通性与记录校核",
                     ]
                 )
+                if len(rows) >= min(6, self.MAX_ROWS_PER_TABLE):
+                    break
+            if len(rows) >= min(6, self.MAX_ROWS_PER_TABLE):
+                break
 
         if len(rows) < 2:
             return None
@@ -147,7 +219,10 @@ class TableBuilderAgent:
         *,
         node_text: NodeText,
         requirement: RequirementDocument,
+        topic_keywords: list[str],
     ) -> dict[str, Any] | None:
+        if not self._topic_supports_constraint_table(node_text.title, topic_keywords):
+            return None
         rows: list[list[str]] = []
         refs = self._collect_requirement_refs(requirement)[:4]
 
@@ -156,8 +231,12 @@ class TableBuilderAgent:
             if not standard:
                 continue
             rows.append(["标准约束", standard, "执行", "用于实施过程与验收核对"])
+            if len(rows) >= self.MAX_ROWS_PER_TABLE:
+                break
 
         for item in requirement.constraints.acceptance:
+            if len(rows) >= self.MAX_ROWS_PER_TABLE:
+                break
             acceptance = item.strip()
             if not acceptance:
                 continue
@@ -188,12 +267,32 @@ class TableBuilderAgent:
             "parameter_matrix",
             "test_record",
         }
-        return row_count >= 3 or col_count >= 4 or structured_kind
+        if row_count == 0:
+            return False
+        return (2 <= row_count <= self.MAX_ROWS_PER_TABLE and col_count >= 3) and structured_kind
 
     @staticmethod
     def _is_equipment_requirement(*, key: str, value: str) -> bool:
         target = f"{key} {value}"
-        tokens = ["设备", "型号", "数量", "安装", "位置", "交换机", "配线", "机柜", "终端"]
+        tokens = [
+            "设备",
+            "型号",
+            "数量",
+            "安装",
+            "位置",
+            "交换机",
+            "配线",
+            "机柜",
+            "终端",
+            "热泵",
+            "换热器",
+            "水泵",
+            "阀门",
+            "桥架",
+            "电缆",
+            "装置",
+            "机组",
+        ]
         return any(token in target for token in tokens)
 
     @staticmethod
@@ -232,3 +331,74 @@ class TableBuilderAgent:
     @staticmethod
     def _iter_paragraphs(node_text: NodeText) -> list[TextParagraph]:
         return [paragraph for section in node_text.sections for paragraph in section.paragraphs]
+
+    def _matches_topic(self, text: str, topic_keywords: list[str]) -> bool:
+        normalized = text.strip()
+        if not normalized:
+            return False
+        return any(keyword in normalized for keyword in topic_keywords)
+
+    def _node_topic_keywords(self, node_text: NodeText) -> list[str]:
+        raw_phrases = [node_text.title] + [section.title for section in node_text.sections]
+        keywords: list[str] = []
+        for phrase in raw_phrases:
+            normalized = phrase.strip()
+            if not normalized:
+                continue
+            for suffix in (
+                "技术要求",
+                "系统方案",
+                "实施范围与目标",
+                "施工准备与资源配置",
+                "实施步骤与质量控制",
+                "验收要求与交付条件",
+                "风险控制与留痕管理",
+                "配置与选型要求",
+                "性能与控制要求",
+                "安装与验收要求",
+                "接口与边界要求",
+                "数据接入与联调要求",
+                "测试与交付要求",
+            ):
+                if normalized.endswith(suffix):
+                    normalized = normalized[: -len(suffix)].strip()
+            parts = [normalized]
+            parts.extend(
+                item.strip()
+                for item in re.split(r"[、，,及与和/\\s]+", normalized)
+                if item.strip()
+            )
+            for item in parts:
+                if len(item) < 2:
+                    continue
+                if item in self.GENERIC_TOPIC_TOKENS:
+                    continue
+                if item not in keywords:
+                    keywords.append(item)
+        return keywords
+
+    @staticmethod
+    def _topic_supports_equipment_table(node_title: str, topic_keywords: list[str]) -> bool:
+        title = node_title.strip()
+        if any(token in title for token in ("背景", "目标", "原则", "响应说明", "培训", "服务", "其他")):
+            return False
+        return any(
+            token in title or any(token in keyword for keyword in topic_keywords)
+            for token in ("设备", "热泵", "换热器", "水泵", "阀门", "桥架", "电缆", "机组", "装置", "柜")
+        )
+
+    @staticmethod
+    def _topic_supports_interface_table(node_title: str, topic_keywords: list[str]) -> bool:
+        title = node_title.strip()
+        return any(
+            token in title or any(token in keyword for keyword in topic_keywords)
+            for token in ("接口", "联调", "集成", "通讯", "控制", "PLC", "上位系统", "自控")
+        )
+
+    @staticmethod
+    def _topic_supports_constraint_table(node_title: str, topic_keywords: list[str]) -> bool:
+        title = node_title.strip()
+        return any(
+            token in title or any(token in keyword for keyword in topic_keywords)
+            for token in ("标准", "验收", "规范", "安全", "环保", "消防", "安装", "设计")
+        )

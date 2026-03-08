@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_9fb0e66ff6",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "运行环境适应性要求",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "运行环境适应性要求实施范围与目标",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "运行环境适应性要求施工准备与资源配置",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

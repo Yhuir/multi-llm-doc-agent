@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_091edc0ccc",
+  "node_id": "1.13.3.2",
+  "status": "READY_FOR_LAYOUT",
+  "current_stage": "READY_FOR_LAYOUT",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_091edc0ccc/snapshots/consistency_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_091edc0ccc/consistency.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 4,
+  "retry_fact": 0,
+  "duration_ms": 5,
+  "metrics": {
+    "stage": "consistency",
+    "progress": 0.94,
+    "word_count": 2054,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.715,
+    "manual_image_count": 1,
+    "table_count": 1,
+    "consistency_issue_count": 0,
+    "image_manual_required": true
+  },
+  "created_at": "2026-03-08T11:38:34.251056+00:00"
+}

@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_d3eb8236e5",
+  "node_id": "1.17.1.3",
+  "status": "NODE_DONE",
+  "current_stage": "NODE_DONE",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_d3eb8236e5/snapshots/finalize_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_d3eb8236e5/metrics.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 4,
+  "retry_fact": 0,
+  "duration_ms": 0,
+  "metrics": {
+    "stage": "finalize",
+    "progress": 1.0,
+    "word_count": 2054,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.715,
+    "manual_image_count": 1,
+    "table_count": 1,
+    "consistency_issue_count": 0,
+    "image_manual_required": true
+  },
+  "created_at": "2026-03-08T11:38:47.004752+00:00"
+}

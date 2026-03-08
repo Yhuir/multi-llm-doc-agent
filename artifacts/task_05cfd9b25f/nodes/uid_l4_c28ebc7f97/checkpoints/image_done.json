@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_c28ebc7f97",
+  "node_id": "1.11.7.3",
+  "status": "IMAGE_DONE",
+  "current_stage": "IMAGE_DONE",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_c28ebc7f97/snapshots/image_generate_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_c28ebc7f97/images.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 0,
+  "retry_fact": 0,
+  "duration_ms": 24,
+  "metrics": {
+    "stage": "image_generate",
+    "progress": 0.55,
+    "word_count": 2068,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.0,
+    "manual_image_count": 0,
+    "table_count": 0,
+    "consistency_issue_count": 0,
+    "image_manual_required": false
+  },
+  "created_at": "2026-03-08T11:38:29.353302+00:00"
+}

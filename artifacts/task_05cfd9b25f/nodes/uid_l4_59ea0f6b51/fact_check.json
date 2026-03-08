@@ -1,0 +1,189 @@
+{
+  "node_uid": "uid_l4_59ea0f6b51",
+  "grounded_ratio": 1.0,
+  "result": "PASS",
+  "claims": [
+    {
+      "claim_id": "claim_001",
+      "text": "在在大理卷烟厂厂区内新建1套空压机余热回收系统的乏汽与冷凝水回收流程图实施中，乏汽与冷凝水回收流程图实施范围与目标应遵循先准备、后实施、再验证的顺序，确保现场条件、资源配置和作业窗口满足施工组织要求。",
+      "claim_type": "process",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_002",
+      "text": "实施过程应严格执行GB51245-2017、GB50016-2014、GB等约束要求，关键工序应形成检查记录，每项结果必须能够对应到节点责任人与时间戳。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_003",
+      "text": "针对本节工作内容，项目工期按合同约定执行，并应同步落实本项目工程优化、设计、制造、安装及验收等执行以下但不限于以下所列规范、标准、文件的最新版本，对未列出的国家有安全、消防、防爆、环保等强制性标准的，必须满足其要求。；《机械设备安装工程施工及验收通用规范》（GB 50231-2009），确保交付时具备可核查的证据链和问题闭环记录。",
+      "claim_type": "duration",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_004",
+      "text": "当乏汽与冷凝水回收流程图进入现场作业阶段时，应设置质量控制点、风险控制点和验收见证点，避免工序返工与接口冲突，保证整体实施的连续性与可维护性。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_005",
+      "text": "在在大理卷烟厂厂区内新建1套空压机余热回收系统的乏汽与冷凝水回收流程图实施中，乏汽与冷凝水回收流程图施工准备与资源配置应遵循先准备、后实施、再验证的顺序，确保现场条件、资源配置和作业窗口满足施工组织要求。",
+      "claim_type": "process",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_006",
+      "text": "实施过程应严格执行GB51245-2017、GB50016-2014、GB等约束要求，关键工序应形成检查记录，每项结果必须能够对应到节点责任人与时间戳。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_007",
+      "text": "针对本节工作内容，项目工期按合同约定执行，并应同步落实本项目工程优化、设计、制造、安装及验收等执行以下但不限于以下所列规范、标准、文件的最新版本，对未列出的国家有安全、消防、防爆、环保等强制性标准的，必须满足其要求。；《机械设备安装工程施工及验收通用规范》（GB 50231-2009），确保交付时具备可核查的证据链和问题闭环记录。",
+      "claim_type": "duration",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_008",
+      "text": "当乏汽与冷凝水回收流程图进入现场作业阶段时，应设置质量控制点、风险控制点和验收见证点，避免工序返工与接口冲突，保证整体实施的连续性与可维护性。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_009",
+      "text": "在在大理卷烟厂厂区内新建1套空压机余热回收系统的乏汽与冷凝水回收流程图实施中，设计安装标准实施步骤与质量控制应遵循先准备、后实施、再验证的顺序，确保现场条件、资源配置和作业窗口满足施工组织要求。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_010",
+      "text": "实施过程应严格执行GB51245-2017、GB50016-2014、GB等约束要求，关键工序应形成检查记录，每项结果必须能够对应到节点责任人与时间戳。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_011",
+      "text": "针对本节工作内容，项目工期按合同约定执行，并应同步落实本项目工程优化、设计、制造、安装及验收等执行以下但不限于以下所列规范、标准、文件的最新版本，对未列出的国家有安全、消防、防爆、环保等强制性标准的，必须满足其要求。；《机械设备安装工程施工及验收通用规范》（GB 50231-2009），确保交付时具备可核查的证据链和问题闭环记录。",
+      "claim_type": "duration",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_012",
+      "text": "当乏汽与冷凝水回收流程图进入现场作业阶段时，应设置质量控制点、风险控制点和验收见证点，避免工序返工与接口冲突，保证整体实施的连续性与可维护性。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_013",
+      "text": "在在大理卷烟厂厂区内新建1套空压机余热回收系统的乏汽与冷凝水回收流程图实施中，乏汽与冷凝水回收流程图验收要求与交付条件应遵循先准备、后实施、再验证的顺序，确保现场条件、资源配置和作业窗口满足施工组织要求。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_014",
+      "text": "实施过程应严格执行GB51245-2017、GB50016-2014、GB等约束要求，关键工序应形成检查记录，每项结果必须能够对应到节点责任人与时间戳。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_015",
+      "text": "针对本节工作内容，项目工期按合同约定执行，并应同步落实本项目工程优化、设计、制造、安装及验收等执行以下但不限于以下所列规范、标准、文件的最新版本，对未列出的国家有安全、消防、防爆、环保等强制性标准的，必须满足其要求。；《机械设备安装工程施工及验收通用规范》（GB 50231-2009），确保交付时具备可核查的证据链和问题闭环记录。",
+      "claim_type": "duration",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_016",
+      "text": "当乏汽与冷凝水回收流程图进入现场作业阶段时，应设置质量控制点、风险控制点和验收见证点，避免工序返工与接口冲突，保证整体实施的连续性与可维护性。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_017",
+      "text": "在在大理卷烟厂厂区内新建1套空压机余热回收系统的乏汽与冷凝水回收流程图实施中，乏汽与冷凝水回收流程图风险控制与留痕管理应遵循先准备、后实施、再验证的顺序，确保现场条件、资源配置和作业窗口满足施工组织要求。",
+      "claim_type": "process",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_018",
+      "text": "实施过程应严格执行GB51245-2017、GB50016-2014、GB等约束要求，关键工序应形成检查记录，每项结果必须能够对应到节点责任人与时间戳。",
+      "claim_type": "standard",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_019",
+      "text": "针对本节工作内容，项目工期按合同约定执行，并应同步落实本项目工程优化、设计、制造、安装及验收等执行以下但不限于以下所列规范、标准、文件的最新版本，对未列出的国家有安全、消防、防爆、环保等强制性标准的，必须满足其要求。；《机械设备安装工程施工及验收通用规范》（GB 50231-2009），确保交付时具备可核查的证据链和问题闭环记录。",
+      "claim_type": "duration",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    },
+    {
+      "claim_id": "claim_020",
+      "text": "当乏汽与冷凝水回收流程图进入现场作业阶段时，应设置质量控制点、风险控制点和验收见证点，避免工序返工与接口冲突，保证整体实施的连续性与可维护性。",
+      "claim_type": "acceptance",
+      "support_status": "SUPPORTED",
+      "source_refs": [
+        "p1#L23"
+      ]
+    }
+  ],
+  "unsupported_claims": [],
+  "weak_claims": []
+}

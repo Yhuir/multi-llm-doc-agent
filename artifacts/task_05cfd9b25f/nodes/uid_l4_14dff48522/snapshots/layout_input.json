@@ -1,0 +1,10 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_14dff48522",
+  "node_id": "1.16.2.3",
+  "stage": "layout",
+  "current_status": "READY_FOR_LAYOUT",
+  "current_stage": "READY_FOR_LAYOUT",
+  "last_output_artifact": "artifacts/task_05cfd9b25f/nodes/uid_l4_14dff48522/consistency.json",
+  "generated_at": "2026-03-08T11:38:44.357632+00:00"
+}

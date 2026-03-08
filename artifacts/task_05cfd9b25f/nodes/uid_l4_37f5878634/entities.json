@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_37f5878634",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "空压站循环水泵及配套设施保护性拆除",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "空压站循环水泵及配套设施保护性拆除实",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "空压站循环水泵及配套设施保护性拆除施",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

@@ -330,6 +330,19 @@ class ImagesArtifact(StrictBaseModel):
     images: list[ImageItem] = Field(default_factory=list)
 
 
+class ImageScoreItem(StrictBaseModel):
+    image_id: str
+    score: float
+    missing_elements: list[str] = Field(default_factory=list)
+    result: AgentResult
+
+
+class ImageRelevanceReport(StrictBaseModel):
+    node_uid: str
+    image_scores: list[ImageScoreItem] = Field(default_factory=list)
+    overall_result: AgentResult
+
+
 class TableItem(StrictBaseModel):
     table_id: str
     title: str

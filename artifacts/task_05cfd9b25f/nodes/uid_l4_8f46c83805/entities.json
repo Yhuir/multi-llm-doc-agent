@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_8f46c83805",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "系统通信可靠性保障措施",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "系统通信可靠性保障措施实施范围与目标",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "系统通信可靠性保障措施施工准备与资源",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

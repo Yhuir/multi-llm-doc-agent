@@ -1,0 +1,10 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_aeef685520",
+  "node_id": "1.6.2.3",
+  "stage": "finalize",
+  "current_status": "LAYOUTED",
+  "current_stage": "LAYOUTED",
+  "last_output_artifact": "artifacts/task_05cfd9b25f/nodes/uid_l4_aeef685520/layout_ready.json",
+  "generated_at": "2026-03-08T11:39:08.780790+00:00"
+}

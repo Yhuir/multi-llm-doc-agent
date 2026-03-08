@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_3f88524a65",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "联动启停与热切换策略",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "联动启停与热切换策略实施范围与目标",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "联动启停与热切换策略施工准备与资源配",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

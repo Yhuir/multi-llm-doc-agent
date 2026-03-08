@@ -33,6 +33,8 @@ class SystemConfigUpdateRequest(BaseModel):
     image_provider: str | None = None
     text_model_name: str | None = None
     image_model_name: str | None = None
+    text_api_key: str | None = None
+    image_api_key: str | None = None
     api_key: str | None = None
 
 
@@ -169,7 +171,9 @@ def review_toc(task_id: str, payload: TOCReviewRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return version.model_dump(mode="json")
+    response = version.model_dump(mode="json")
+    response["toc_document"] = service.get_toc_document(task_id, version.version_no)
+    return response
 
 
 @app.post("/tasks/{task_id}/toc/confirm")
@@ -192,6 +196,14 @@ def start_generation(task_id: str) -> dict[str, Any]:
         "task_id": task_id,
         "message": "Task queued. Start backend worker to execute.",
     }
+
+
+@app.post("/tasks/{task_id}/generation/confirm-and-start")
+def confirm_and_start_generation(task_id: str, payload: TOCConfirmRequest) -> dict[str, Any]:
+    try:
+        return service.confirm_and_start_generation(task_id, payload.version_no)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/tasks/{task_id}/nodes")

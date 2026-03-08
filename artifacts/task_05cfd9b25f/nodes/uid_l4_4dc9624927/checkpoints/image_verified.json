@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_4dc9624927",
+  "node_id": "1.16.5.3",
+  "status": "IMAGE_VERIFIED",
+  "current_stage": "IMAGE_VERIFIED",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_4dc9624927/snapshots/image_verify_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_4dc9624927/image_relevance.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 4,
+  "retry_fact": 0,
+  "duration_ms": 75,
+  "metrics": {
+    "stage": "image_verify",
+    "progress": 0.72,
+    "word_count": 2012,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.715,
+    "manual_image_count": 1,
+    "table_count": 0,
+    "consistency_issue_count": 0,
+    "image_manual_required": true
+  },
+  "created_at": "2026-03-08T11:38:45.781360+00:00"
+}

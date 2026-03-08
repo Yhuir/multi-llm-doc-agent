@@ -1,0 +1,10 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_72fa699591",
+  "node_id": "1.12.4.3",
+  "stage": "image_verify",
+  "current_status": "IMAGE_DONE",
+  "current_stage": "IMAGE_DONE",
+  "last_output_artifact": "artifacts/task_05cfd9b25f/nodes/uid_l4_72fa699591/images.json",
+  "generated_at": "2026-03-08T11:38:31.560580+00:00"
+}

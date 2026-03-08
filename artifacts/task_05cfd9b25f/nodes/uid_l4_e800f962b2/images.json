@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_e800f962b2",
+  "images": [
+    {
+      "image_id": "img_001",
+      "type": "process",
+      "file": "images/img_001.png",
+      "caption": "图001 太阳能与空气源热泵协同利用逻辑实施范围与目标process示意",
+      "group_caption": null,
+      "prompt_id": "prompt_001",
+      "must_have_elements": [
+        "太阳能与空气源热泵协同利用逻辑",
+        "太阳能与空气源热泵协同利用逻辑实施范",
+        "施工",
+        "现场"
+      ],
+      "bind_anchor": "anchor_uid_l4_e800f962b2_01",
+      "bind_section": "太阳能与空气源热泵协同利用逻辑实施范围与目标",
+      "retry_count": 1,
+      "status": "PASS"
+    },
+    {
+      "image_id": "img_002",
+      "type": "acceptance",
+      "file": "images/img_002.png",
+      "caption": "图002 太阳能与空气源热泵协同利用逻辑施工准备与资源配置acceptance示意",
+      "group_caption": null,
+      "prompt_id": "prompt_002",
+      "must_have_elements": [
+        "太阳能与空气源热泵协同利用逻辑",
+        "太阳能与空气源热泵协同利用逻辑实施范",
+        "施工",
+        "现场"
+      ],
+      "bind_anchor": "anchor_uid_l4_e800f962b2_02",
+      "bind_section": "太阳能与空气源热泵协同利用逻辑施工准备与资源配置",
+      "retry_count": 3,
+      "status": "NEED_MANUAL_CONFIRM"
+    }
+  ]
+}
