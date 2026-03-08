@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Local environment
+.env
+.env.local
+
+# Local database
+app.db
+
+# Runtime artifacts
+artifacts/
+
+# Python cache and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build / temp
+*.tmp
+*.temp
+
+# Frontend dependencies and build output
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# Common editor / virtualenv noise
+.idea/
+.vscode/
+.venv/
+venv/
