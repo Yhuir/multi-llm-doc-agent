@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from backend.config import AppSettings, load_settings
+from backend.config import AppSettings, SystemConfigStore, load_settings
 from backend.models.enums import EventStatus, TaskStatus
 from backend.models.schemas import EventLog, utc_now_iso
 from backend.orchestrator.orchestrator import Orchestrator
@@ -34,6 +34,7 @@ class WorkerProcess:
         self.node_repository = NodeStateRepository(self.db)
         self.event_repository = EventLogRepository(self.db)
         self.chat_repository = ChatMessageRepository(self.db)
+        self.system_config_store = SystemConfigStore(settings.system_config_path)
 
         self.node_runner = NodeRunner(
             node_repository=self.node_repository,
@@ -41,6 +42,7 @@ class WorkerProcess:
             event_repository=self.event_repository,
             artifacts_root=Path(settings.artifacts_root),
             template_path=Path(settings.template_path),
+            system_config_getter=self.system_config_store.get,
         )
         self.orchestrator = Orchestrator(
             task_repository=self.task_repository,

@@ -189,6 +189,7 @@ class Orchestrator:
         feedback: str,
         *,
         based_on_version_no: int | None = None,
+        review_config: dict[str, Any] | None = None,
     ) -> TOCVersion:
         task = self._require_task(task_id)
         if task.status != TaskStatus.TOC_REVIEW:
@@ -216,7 +217,11 @@ class Orchestrator:
         )
 
         old_doc = self._load_toc(Path(base_version.file_path))
-        new_doc = self.toc_review_agent.review(toc_doc=old_doc, feedback=feedback)
+        new_doc = self.toc_review_agent.review(
+            toc_doc=old_doc,
+            feedback=feedback,
+            review_config=review_config,
+        )
 
         new_version_no = latest.version_no + 1
         new_doc.version = new_version_no
@@ -224,10 +229,13 @@ class Orchestrator:
         new_doc.generated_at = utc_now_iso()
         self._renumber_node_ids(new_doc.tree)
 
+        diff_summary = self._diff_toc(old_doc.tree, new_doc.tree)
+        if not self._has_effective_toc_diff(diff_summary):
+            raise ValueError("未根据审阅意见应用任何目录修改，请更具体地指出要修改的章节标题、位置或新增内容。")
+
         toc_path = self._task_path(task_id, "toc", f"toc_v{new_version_no}.json")
         self._write_json(toc_path, new_doc.model_dump(mode="json"))
 
-        diff_summary = self._diff_toc(old_doc.tree, new_doc.tree)
         toc_version = TOCVersion(
             toc_version_id=f"tocv_{uuid.uuid4().hex[:12]}",
             task_id=task_id,
@@ -337,6 +345,30 @@ class Orchestrator:
             stage="WORKER_QUEUE",
             message="Generation queued. Worker will pick this task.",
         )
+
+    def confirm_and_start_generation(self, task_id: str, version_no: int) -> dict[str, Any]:
+        task = self._require_task(task_id)
+        if (
+            task.status == TaskStatus.GENERATING
+            and task.confirmed_toc_version == version_no
+            and task.total_nodes > 0
+        ):
+            self.start_generation(task_id)
+            refreshed = self._require_task(task_id)
+            return {
+                "seeded_nodes": refreshed.total_nodes,
+                "already_confirmed": True,
+                "task": refreshed,
+            }
+
+        seeded_nodes = self.confirm_toc(task_id, version_no)
+        self.start_generation(task_id)
+        refreshed = self._require_task(task_id)
+        return {
+            "seeded_nodes": seeded_nodes,
+            "already_confirmed": False,
+            "task": refreshed,
+        }
 
     def run_worker_task(self, task_id: str) -> None:
         """Run one worker cycle for a task and advance task-level state machine."""
@@ -541,6 +573,13 @@ class Orchestrator:
             "reorder": reorder,
             "move": move,
         }
+
+    def _has_effective_toc_diff(self, diff_summary: dict[str, Any]) -> bool:
+        summary = diff_summary.get("summary") or {}
+        return any(
+            int(summary.get(key, 0)) > 0
+            for key in ("add_count", "remove_count", "title_change_count", "reorder_count", "move_count")
+        )
 
     def _flatten_toc(self, tree: list[TOCNode]) -> dict[str, dict[str, Any]]:
         flat: dict[str, dict[str, Any]] = {}

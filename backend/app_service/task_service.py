@@ -59,6 +59,7 @@ class TaskService:
             event_repository=self.event_repository,
             artifacts_root=self.artifacts_root,
             template_path=Path(self.settings.template_path),
+            system_config_getter=self.system_config_store.get,
         )
 
         self.orchestrator = Orchestrator(
@@ -144,14 +145,25 @@ class TaskService:
     ):
         if not feedback.strip():
             raise ValueError("Feedback cannot be empty.")
+        review_config = self.get_system_config()
         return self.orchestrator.review_toc(
             task_id,
             feedback,
             based_on_version_no=based_on_version_no,
+            review_config=review_config,
         )
 
     def confirm_toc(self, task_id: str, version_no: int) -> int:
         return self.orchestrator.confirm_toc(task_id, version_no)
+
+    def confirm_and_start_generation(self, task_id: str, version_no: int) -> dict:
+        result = self.orchestrator.confirm_and_start_generation(task_id, version_no)
+        task = result["task"]
+        return {
+            "seeded_nodes": result["seeded_nodes"],
+            "already_confirmed": result["already_confirmed"],
+            "task": task.model_dump(mode="json"),
+        }
 
     def start_generation(self, task_id: str) -> None:
         self.orchestrator.start_generation(task_id)

@@ -11,69 +11,50 @@ from backend.repositories.db import SQLiteDB
 
 class NodeStateRepository:
     _UNSET = object()
+    _UPSERT_SQL = """
+        INSERT INTO node_state (
+            node_state_id, task_id, node_uid, node_id, title, level, status,
+            progress, retry_text, retry_image, retry_fact, image_manual_required,
+            manual_action_status, current_stage, last_error, input_snapshot_path,
+            output_artifact_path, started_at, updated_at, last_heartbeat_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_id, node_uid) DO UPDATE SET
+            node_id = excluded.node_id,
+            title = excluded.title,
+            level = excluded.level,
+            status = excluded.status,
+            progress = excluded.progress,
+            retry_text = excluded.retry_text,
+            retry_image = excluded.retry_image,
+            retry_fact = excluded.retry_fact,
+            image_manual_required = excluded.image_manual_required,
+            manual_action_status = excluded.manual_action_status,
+            current_stage = excluded.current_stage,
+            last_error = excluded.last_error,
+            input_snapshot_path = excluded.input_snapshot_path,
+            output_artifact_path = excluded.output_artifact_path,
+            started_at = excluded.started_at,
+            updated_at = excluded.updated_at,
+            last_heartbeat_at = excluded.last_heartbeat_at,
+            finished_at = excluded.finished_at
+    """
 
     def __init__(self, db: SQLiteDB) -> None:
         self.db = db
 
     def upsert(self, node_state: NodeState) -> NodeState:
         with self.db.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO node_state (
-                    node_state_id, task_id, node_uid, node_id, title, level, status,
-                    progress, retry_text, retry_image, retry_fact, image_manual_required,
-                    manual_action_status, current_stage, last_error, input_snapshot_path,
-                    output_artifact_path, started_at, updated_at, last_heartbeat_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id, node_uid) DO UPDATE SET
-                    node_id = excluded.node_id,
-                    title = excluded.title,
-                    level = excluded.level,
-                    status = excluded.status,
-                    progress = excluded.progress,
-                    retry_text = excluded.retry_text,
-                    retry_image = excluded.retry_image,
-                    retry_fact = excluded.retry_fact,
-                    image_manual_required = excluded.image_manual_required,
-                    manual_action_status = excluded.manual_action_status,
-                    current_stage = excluded.current_stage,
-                    last_error = excluded.last_error,
-                    input_snapshot_path = excluded.input_snapshot_path,
-                    output_artifact_path = excluded.output_artifact_path,
-                    started_at = excluded.started_at,
-                    updated_at = excluded.updated_at,
-                    last_heartbeat_at = excluded.last_heartbeat_at,
-                    finished_at = excluded.finished_at
-                """,
-                (
-                    node_state.node_state_id,
-                    node_state.task_id,
-                    node_state.node_uid,
-                    node_state.node_id,
-                    node_state.title,
-                    node_state.level,
-                    node_state.status.value,
-                    node_state.progress,
-                    node_state.retry_text,
-                    node_state.retry_image,
-                    node_state.retry_fact,
-                    int(node_state.image_manual_required),
-                    node_state.manual_action_status.value,
-                    node_state.current_stage,
-                    node_state.last_error,
-                    node_state.input_snapshot_path,
-                    node_state.output_artifact_path,
-                    node_state.started_at,
-                    node_state.updated_at,
-                    node_state.last_heartbeat_at,
-                    node_state.finished_at,
-                ),
-            )
+            conn.execute(self._UPSERT_SQL, self._to_upsert_params(node_state))
         return node_state
 
     def create_many(self, node_states: list[NodeState]) -> None:
-        for node_state in node_states:
-            self.upsert(node_state)
+        if not node_states:
+            return
+        with self.db.connection() as conn:
+            conn.executemany(
+                self._UPSERT_SQL,
+                [self._to_upsert_params(node_state) for node_state in node_states],
+            )
 
     def get(self, task_id: str, node_uid: str) -> NodeState | None:
         with self.db.connection() as conn:
@@ -236,4 +217,30 @@ class NodeStateRepository:
             updated_at=row["updated_at"],
             last_heartbeat_at=row["last_heartbeat_at"],
             finished_at=row["finished_at"],
+        )
+
+    @staticmethod
+    def _to_upsert_params(node_state: NodeState) -> tuple[Any, ...]:
+        return (
+            node_state.node_state_id,
+            node_state.task_id,
+            node_state.node_uid,
+            node_state.node_id,
+            node_state.title,
+            node_state.level,
+            node_state.status.value,
+            node_state.progress,
+            node_state.retry_text,
+            node_state.retry_image,
+            node_state.retry_fact,
+            int(node_state.image_manual_required),
+            node_state.manual_action_status.value,
+            node_state.current_stage,
+            node_state.last_error,
+            node_state.input_snapshot_path,
+            node_state.output_artifact_path,
+            node_state.started_at,
+            node_state.updated_at,
+            node_state.last_heartbeat_at,
+            node_state.finished_at,
         )

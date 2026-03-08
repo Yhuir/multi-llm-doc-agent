@@ -1,0 +1,365 @@
+"""Mock image generation agent for V1."""
+
+from __future__ import annotations
+
+import json
+import struct
+import zlib
+from pathlib import Path
+from typing import Any
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
+
+from backend.models.schemas import ImageItem, ImagePromptItem
+
+try:
+    from PIL import Image, ImageDraw
+except Exception:  # noqa: BLE001
+    Image = None
+    ImageDraw = None
+
+
+class ImageGenerationAgent:
+    """Generate deterministic placeholder PNG files for prompts."""
+
+    DOUBAO_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    DOUBAO_MODEL_ORDER = [
+        "Doubao-Seedream-5.0-lite",
+        "Doubao-Seedream-4.5",
+        "Doubao-Seed3D-1.0",
+        "Doubao-Seedream-4.0",
+        "Doubao-Seedream-3.0-t2i",
+    ]
+    DOUBAO_MODEL_MAP = {
+        "Doubao-Seedream-5.0-lite": "doubao-seedream-5-0-lite",
+        "doubao-seedream-5-0-lite": "doubao-seedream-5-0-lite",
+        "Doubao-Seedream-4.5": "doubao-seedream-4-5-251128",
+        "doubao-seedream-4-5-251128": "doubao-seedream-4-5-251128",
+        "Doubao-Seed3D-1.0": "doubao-seed3d-1-0",
+        "doubao-seed3d-1-0": "doubao-seed3d-1-0",
+        "Doubao-Seedream-4.0": "doubao-seedream-4-0-250828",
+        "doubao-seedream-4-0-250828": "doubao-seedream-4-0-250828",
+        "Doubao-Seedream-3.0-t2i": "doubao-seedream-3-0-t2i-250415",
+        "doubao-seedream-3-0-t2i-250415": "doubao-seedream-3-0-t2i-250415",
+    }
+
+    def generate(
+        self,
+        *,
+        prompt_item: ImagePromptItem,
+        node_dir: Path,
+        retry_count: int,
+        provider_config: dict[str, Any] | None = None,
+    ) -> ImageItem:
+        image_id = prompt_item.prompt_id.replace("prompt", "img")
+        relative_stem = Path("images") / image_id
+        absolute_stem = node_dir / relative_stem
+        absolute_stem.parent.mkdir(parents=True, exist_ok=True)
+        if self._use_doubao(provider_config):
+            absolute_path = self._generate_via_doubao(
+                output_stem=absolute_stem,
+                prompt_item=prompt_item,
+                provider_config=provider_config or {},
+            )
+        else:
+            absolute_path = absolute_stem.with_suffix(".png")
+            self._write_placeholder_png(
+                absolute_path,
+                prompt_item=prompt_item,
+                color_seed=f"{prompt_item.prompt_id}:{prompt_item.image_type}:{retry_count}",
+            )
+        relative_path = absolute_path.relative_to(node_dir)
+        return ImageItem(
+            image_id=image_id,
+            type=prompt_item.image_type,
+            file=str(relative_path),
+            caption=self._build_caption(prompt_item, image_id),
+            group_caption=None,
+            prompt_id=prompt_item.prompt_id,
+            must_have_elements=list(prompt_item.must_have_elements),
+            bind_anchor=prompt_item.bind_anchor,
+            bind_section=prompt_item.bind_section,
+            retry_count=retry_count,
+        )
+
+    def _generate_via_doubao(
+        self,
+        *,
+        output_stem: Path,
+        prompt_item: ImagePromptItem,
+        provider_config: dict[str, Any],
+    ) -> Path:
+        api_key = str(provider_config.get("image_api_key") or "").strip()
+        if not api_key:
+            raise RuntimeError("Doubao image provider selected but image_api_key is empty.")
+
+        selected_model = str(provider_config.get("image_model_name") or "").strip()
+        provider_config.pop("_resolved_image_model_name", None)
+        provider_config.pop("_resolved_image_model_id", None)
+        provider_config.pop("_image_model_attempts", None)
+        provider_config.pop("_image_model_fallback_from", None)
+        model_attempts: list[str] = []
+        errors: list[str] = []
+
+        for model_label in self._doubao_model_candidates(selected_model):
+            model_attempts.append(model_label)
+            model_name = self._resolve_doubao_model(model_label)
+            payload = {
+                "model": model_name,
+                "prompt": prompt_item.prompt,
+                "sequential_image_generation": "disabled",
+                "response_format": "url",
+                "size": "2K",
+                "stream": False,
+                "watermark": True,
+            }
+            try:
+                image_url = self._request_doubao_image_url(api_key=api_key, payload=payload)
+                provider_config["_resolved_image_model_name"] = model_label
+                provider_config["_resolved_image_model_id"] = model_name
+                provider_config["_image_model_attempts"] = list(model_attempts)
+                if selected_model and model_label != selected_model:
+                    provider_config["_image_model_fallback_from"] = selected_model
+                return self._download_image_url(image_url=image_url, output_stem=output_stem)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{model_label}: {exc}")
+                continue
+
+        raise RuntimeError(
+            "Doubao image generation failed after automatic model fallback: "
+            + " | ".join(errors)
+        )
+
+    @classmethod
+    def _resolve_doubao_model(cls, model_name: str) -> str:
+        normalized = model_name.strip()
+        if normalized in cls.DOUBAO_MODEL_MAP:
+            return cls.DOUBAO_MODEL_MAP[normalized]
+        if normalized.startswith("doubao-seedream-"):
+            return normalized
+        if normalized.startswith("doubao-seed3d-"):
+            return normalized
+        return cls.DOUBAO_MODEL_MAP["Doubao-Seedream-4.5"]
+
+    @classmethod
+    def _doubao_model_candidates(cls, selected_model: str) -> list[str]:
+        normalized = selected_model.strip()
+        if not normalized:
+            return list(cls.DOUBAO_MODEL_ORDER)
+        ordered = [normalized]
+        for item in cls.DOUBAO_MODEL_ORDER:
+            if item != normalized:
+                ordered.append(item)
+        return ordered
+
+    @staticmethod
+    def _use_doubao(provider_config: dict[str, Any] | None) -> bool:
+        if not provider_config:
+            return False
+        provider = str(provider_config.get("image_provider") or "").strip().lower()
+        return provider == "doubao"
+
+    def _request_doubao_image_url(self, *, api_key: str, payload: dict[str, Any]) -> str:
+        request = urllib_request.Request(
+            self.DOUBAO_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=90) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(
+                f"Doubao image API HTTP {exc.code}: {detail[:400]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"Doubao image API request failed: {exc.reason}") from exc
+
+        data_items = response_payload.get("data") or []
+        if not data_items or not isinstance(data_items, list):
+            raise RuntimeError(f"Doubao image API returned no data: {response_payload}")
+        image_url = str((data_items[0] or {}).get("url") or "").strip()
+        if not image_url:
+            raise RuntimeError(f"Doubao image API returned no image url: {response_payload}")
+        return image_url
+
+    def _download_image_url(self, *, image_url: str, output_stem: Path) -> Path:
+        request = urllib_request.Request(
+            image_url,
+            headers={
+                "User-Agent": "multi-llm-doc-agent/0.1",
+            },
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=120) as response:
+                content_type = response.headers.get("Content-Type", "")
+                suffix = self._output_suffix(image_url=image_url, content_type=content_type)
+                output_path = output_stem.with_suffix(suffix)
+                output_path.write_bytes(response.read())
+                return output_path
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(
+                f"Failed to download generated image HTTP {exc.code}: {detail[:400]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"Failed to download generated image: {exc.reason}") from exc
+
+    @staticmethod
+    def _output_suffix(*, image_url: str, content_type: str) -> str:
+        url_suffix = Path(urllib_parse.urlparse(image_url).path).suffix.lower()
+        if url_suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+            return ".jpg" if url_suffix == ".jpeg" else url_suffix
+        normalized = content_type.lower()
+        if "jpeg" in normalized or "jpg" in normalized:
+            return ".jpg"
+        if "png" in normalized:
+            return ".png"
+        if "webp" in normalized:
+            return ".webp"
+        return ".jpg"
+
+    @staticmethod
+    def _build_caption(prompt_item: ImagePromptItem, image_id: str) -> str:
+        section = prompt_item.bind_section or "当前小节"
+        suffix = image_id.split("_")[-1]
+        return f"图{suffix} {section}{prompt_item.image_type}示意"
+
+    def _write_placeholder_png(
+        self,
+        path: Path,
+        *,
+        prompt_item: ImagePromptItem,
+        color_seed: str,
+    ) -> None:
+        if Image is not None and ImageDraw is not None:
+            self._write_schematic_placeholder(
+                path=path,
+                prompt_item=prompt_item,
+                color_seed=color_seed,
+            )
+            return
+
+        color = self._color_from_seed(color_seed)
+        width = 768
+        height = 768
+        pixel = bytes(color)
+        rows = []
+        for row_index in range(height):
+            row_color = pixel
+            if row_index % 72 < 8:
+                row_color = bytes(max(channel - 24, 0) for channel in color)
+            rows.append(bytes([0]) + row_color * width)
+        payload = b"".join(rows)
+        path.write_bytes(
+            b"".join(
+                [
+                    b"\x89PNG\r\n\x1a\n",
+                    self._chunk(
+                        b"IHDR",
+                        struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
+                    ),
+                    self._chunk(b"IDAT", zlib.compress(payload, level=9)),
+                    self._chunk(b"IEND", b""),
+                ]
+            )
+        )
+
+    def _write_schematic_placeholder(
+        self,
+        *,
+        path: Path,
+        prompt_item: ImagePromptItem,
+        color_seed: str,
+    ) -> None:
+        color = self._color_from_seed(color_seed)
+        canvas = Image.new("RGB", (1280, 1280), (248, 249, 251))
+        draw = ImageDraw.Draw(canvas)
+
+        accent = color
+        border = tuple(max(channel - 40, 0) for channel in color)
+        title_bar = (accent[0], accent[1], min(accent[2] + 20, 255))
+
+        draw.rounded_rectangle((40, 36, 1240, 1240), radius=24, outline=border, width=4, fill=(255, 255, 255))
+        draw.rounded_rectangle((60, 56, 1220, 176), radius=18, fill=title_bar)
+        draw.text((84, 74), self._safe_ascii(prompt_item.bind_section, "Engineering Diagram"), fill=(255, 255, 255))
+        draw.text((84, 104), f"Type: {self._safe_ascii(prompt_item.image_type, 'process')}", fill=(245, 245, 245))
+
+        box_specs = [
+            (110, 330, 360, 610),
+            (470, 330, 810, 610),
+            (920, 330, 1170, 610),
+        ]
+        labels = self._placeholder_labels(prompt_item)
+        for idx, box in enumerate(box_specs):
+            draw.rounded_rectangle(box, radius=20, outline=accent, width=4, fill=(247, 250, 253))
+            draw.text((box[0] + 24, box[1] + 24), labels[idx], fill=(38, 57, 77))
+            draw.text((box[0] + 24, box[1] + 72), f"Element: {labels[idx]}", fill=(83, 101, 122))
+
+        draw.line((360, 470, 470, 470), fill=accent, width=6)
+        draw.line((810, 470, 920, 470), fill=accent, width=6)
+        draw.polygon([(455, 458), (470, 470), (455, 482)], fill=accent)
+        draw.polygon([(905, 458), (920, 470), (905, 482)], fill=accent)
+
+        must_have_text = " / ".join(
+            self._safe_ascii(item, f"Item {idx}")
+            for idx, item in enumerate(prompt_item.must_have_elements[:3], start=1)
+        ) or "Item 1 / Item 2 / Item 3"
+        draw.text((84, 780), f"Must-have: {must_have_text}", fill=(48, 70, 92))
+        if prompt_item.forbidden_elements:
+            forbidden_text = " / ".join(
+                self._safe_ascii(item, f"Forbidden {idx}")
+                for idx, item in enumerate(prompt_item.forbidden_elements[:2], start=1)
+            )
+            draw.text((84, 840), f"Forbidden: {forbidden_text}", fill=(120, 78, 78))
+
+        canvas.save(path, format="PNG")
+
+    @staticmethod
+    def _placeholder_labels(prompt_item: ImagePromptItem) -> list[str]:
+        base = [
+            ImageGenerationAgent._safe_ascii(item, f"Topic {idx}")
+            for idx, item in enumerate(prompt_item.must_have_elements[:3], start=1)
+            if item
+        ]
+        defaults_ascii = {
+            "process": ["Input", "Process", "Output"],
+            "architecture": ["Device", "Control", "Integration"],
+            "acceptance": ["Check", "Action", "Record"],
+            "equipment": ["Unit", "Interface", "Location"],
+        }
+        labels = base + defaults_ascii.get(prompt_item.image_type, ["Input", "Process", "Output"])
+        return labels[:3]
+
+    @staticmethod
+    def _safe_ascii(text: str | None, fallback: str) -> str:
+        candidate = (text or "").strip()
+        if not candidate:
+            return fallback
+        safe = candidate.encode("ascii", "ignore").decode("ascii").strip()
+        return safe or fallback
+
+    @staticmethod
+    def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + chunk_type
+            + data
+            + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+        )
+
+    @staticmethod
+    def _color_from_seed(seed: str) -> tuple[int, int, int]:
+        digest = zlib.crc32(seed.encode("utf-8")) & 0xFFFFFFFF
+        return (
+            80 + digest % 120,
+            80 + (digest >> 8) % 120,
+            80 + (digest >> 16) % 120,
+        )
