@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-08T04:58:48.640107+00:00",
+  "based_on_version": null,
+  "tree": [
+    {
+      "node_uid": "uid_root_001",
+      "node_id": "1",
+      "level": 1,
+      "title": "工程实施方案",
+      "is_generation_unit": false,
+      "source_refs": [],
+      "constraints": null,
+      "children": [
+        {
+          "node_uid": "uid_l2_001",
+          "node_id": "1.1",
+          "level": 2,
+          "title": "round6-smoke-4",
+          "is_generation_unit": false,
+          "source_refs": [],
+          "constraints": null,
+          "children": [
+            {
+              "node_uid": "uid_l3_001",
+              "node_id": "1.1.1",
+              "level": 3,
+              "title": "子系统1",
+              "is_generation_unit": false,
+              "source_refs": [
+                "p1#L1"
+              ],
+              "constraints": {
+                "min_words": 1800,
+                "recommended_words": [
+                  1800,
+                  2200
+                ],
+                "images": [
+                  2,
+                  3
+                ]
+              },
+              "children": [
+                {
+                  "node_uid": "uid_l4_001_01",
+                  "node_id": "1.1.1.1",
+                  "level": 4,
+                  "title": "子系统1-实施准备",
+                  "is_generation_unit": true,
+                  "source_refs": [
+                    "p1#L1"
+                  ],
+                  "constraints": {
+                    "min_words": 1800,
+                    "recommended_words": [
+                      1800,
+                      2200
+                    ],
+                    "images": [
+                      2,
+                      3
+                    ]
+                  },
+                  "children": []
+                },
+                {
+                  "node_uid": "uid_l4_001_02",
+                  "node_id": "1.1.1.2",
+                  "level": 4,
+                  "title": "子系统1-实施与验收",
+                  "is_generation_unit": true,
+                  "source_refs": [
+                    "p1#L1"
+                  ],
+                  "constraints": {
+                    "min_words": 1800,
+                    "recommended_words": [
+                      1800,
+                      2200
+                    ],
+                    "images": [
+                      2,
+                      3
+                    ]
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

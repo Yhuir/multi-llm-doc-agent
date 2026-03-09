@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_707b89430f",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "水箱换热与热水系统流程图",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "水箱换热与热水系统流程图实施范围与目",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "水箱换热与热水系统流程图施工准备与资",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

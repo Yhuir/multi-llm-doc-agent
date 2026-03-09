@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_b7a3f8ce15",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "管道支吊架制作安装要求",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "管道支吊架制作安装要求实施范围与目标",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "安装",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    }
+  ]
+}

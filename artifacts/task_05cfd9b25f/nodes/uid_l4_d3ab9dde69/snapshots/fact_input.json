@@ -1,0 +1,10 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_d3ab9dde69",
+  "node_id": "1.17.5.1",
+  "stage": "fact",
+  "current_status": "TEXT_DONE",
+  "current_stage": "TEXT_DONE",
+  "last_output_artifact": "artifacts/task_05cfd9b25f/nodes/uid_l4_d3ab9dde69/text.json",
+  "generated_at": "2026-03-08T11:38:49.084036+00:00"
+}

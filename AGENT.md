@@ -19,7 +19,7 @@
 8）字数校验：不达标自动补写直至达标
 9）word排版沿用standard_template.docx的样式， 包括一级、二级、三级标题，禁止Markdown语法，表格沿用BiddingTable样式
 10）输出docx（可选另存doc），用户可下载
-11）Streamlit UI 实时显示总进度百分比、安装目录树显示已完成与进行中的目录节点，并实时刷新
+11）React UI 实时显示总进度百分比、安装目录树显示已完成与进行中的目录节点，并实时刷新
 12）支持断点续跑：任何中断后保留进度，重启App后可继续
 
 ---
@@ -34,7 +34,7 @@
 - 图文一致性校验与重试
 - 字数控制与补写
 - Word 输出，含表格、图片、图题、标题样式、分页
-- Streamlit 可视化进度与状态
+- React 可视化进度与状态
 - 断点续跑（Checkpoint/Resume）
 
 
@@ -77,7 +77,7 @@ Central Orchestrator（编排器）
 - Progress & State Agent（进度/状态/日志/断点续跑）
 
 ### 3.2 技术栈建议
-- UI：Streamlit
+- UI：React
 - Agent 编排： LangChain 
 - Word：不了解
 - 向量检索（可选）：
@@ -364,7 +364,7 @@ Central Orchestrator（编排器）
 
 ---
 
-## 10. Streamlit UI 模块设计
+## 10. React UI 模块设计
 
 ### 10.1 页面结构
 1）新建任务区
@@ -597,5 +597,4 @@ BiddingTable
 - 自动移除每张图片的独立图题
 
 ---
-
 

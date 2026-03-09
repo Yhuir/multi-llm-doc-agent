@@ -9,7 +9,7 @@
 
 V1 采用前后端分离的轻量本地架构：
 
-- 前端：Streamlit
+- 前端：React
 - 后端编排：Python Orchestrator
 - 后台执行：Worker
 - 状态存储：SQLite
@@ -22,7 +22,7 @@ V1 采用前后端分离的轻量本地架构：
 
 ```mermaid
 flowchart TD
-    U[User] --> UI[Streamlit UI]
+    U[User] --> UI[React UI]
 
     UI --> API[Application Service Layer]
     API --> DB[(SQLite)]
@@ -67,7 +67,7 @@ flowchart TD
 
 ## 3. 模块职责
 
-### 3.1 Streamlit UI
+### 3.1 React UI
 负责：
 - 新建任务 / 继续任务
 - 上传 `.docx`
@@ -196,7 +196,7 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as Streamlit
+    participant UI as React
     participant APP as App Service
     participant ORCH as Orchestrator
     participant RP as Requirement Parser

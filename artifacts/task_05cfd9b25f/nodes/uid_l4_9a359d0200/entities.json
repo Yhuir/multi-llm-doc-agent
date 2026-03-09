@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_9a359d0200",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "水源热泵联动与冷却切换逻辑",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "水源热泵联动与冷却切换逻辑实施范围与",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "水源热泵联动与冷却切换逻辑施工准备与",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

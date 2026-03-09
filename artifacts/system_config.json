@@ -1,0 +1,8 @@
+{
+  "text_provider": "minimax",
+  "image_provider": "doubao",
+  "text_model_name": "MiniMax-M2.5",
+  "image_model_name": "Doubao-Seedream-5.0-lite",
+  "text_api_key": "sk-api-rciyJH4LAQg8lBhc-DUmBlaY0Xht83h-zLWD7ey__kOQMKWoq52SiVrk0KSjf37H-1A2aMi91ZswG_Gy0fxEMzyQ4woFF0ZOZalT_YNJoDDkCVrj9Tlb0qc",
+  "image_api_key": "06ddc4e3-638a-4434-bd8d-9e2cf16144b2"
+}

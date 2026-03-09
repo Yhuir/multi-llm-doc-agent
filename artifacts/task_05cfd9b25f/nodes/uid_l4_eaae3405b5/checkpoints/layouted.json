@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_eaae3405b5",
+  "node_id": "1.10.5.2",
+  "status": "LAYOUTED",
+  "current_stage": "LAYOUTED",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_eaae3405b5/snapshots/layout_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_eaae3405b5/layout_ready.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 4,
+  "retry_fact": 0,
+  "duration_ms": 0,
+  "metrics": {
+    "stage": "layout",
+    "progress": 0.99,
+    "word_count": 1998,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.715,
+    "manual_image_count": 1,
+    "table_count": 1,
+    "consistency_issue_count": 0,
+    "image_manual_required": true
+  },
+  "created_at": "2026-03-08T11:38:26.647371+00:00"
+}

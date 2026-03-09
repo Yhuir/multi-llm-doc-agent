@@ -1,0 +1,10 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_8a644a6a05",
+  "node_id": "1.13.3.3",
+  "stage": "length",
+  "current_status": "IMAGE_VERIFIED",
+  "current_stage": "IMAGE_VERIFIED",
+  "last_output_artifact": "artifacts/task_05cfd9b25f/nodes/uid_l4_8a644a6a05/image_relevance.json",
+  "generated_at": "2026-03-08T11:38:34.391107+00:00"
+}

@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_e3fa11ff60",
+  "node_id": "1.15.7.1",
+  "status": "TEXT_DONE",
+  "current_stage": "TEXT_DONE",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_e3fa11ff60/snapshots/text_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_e3fa11ff60/text.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 0,
+  "retry_fact": 0,
+  "duration_ms": 0,
+  "metrics": {
+    "stage": "text",
+    "progress": 0.2,
+    "word_count": 2026,
+    "grounded_ratio": 0.0,
+    "image_score_avg": 0.0,
+    "manual_image_count": 0,
+    "table_count": 0,
+    "consistency_issue_count": 0,
+    "image_manual_required": false
+  },
+  "created_at": "2026-03-08T11:38:42.696050+00:00"
+}

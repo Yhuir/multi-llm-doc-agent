@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_e800f962b2",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "太阳能与空气源热泵协同利用逻辑",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "太阳能与空气源热泵协同利用逻辑实施范",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "太阳能与空气源热泵协同利用逻辑施工准",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

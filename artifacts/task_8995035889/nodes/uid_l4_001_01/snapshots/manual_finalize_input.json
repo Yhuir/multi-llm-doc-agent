@@ -1,0 +1,10 @@
+{
+  "task_id": "task_8995035889",
+  "node_uid": "uid_l4_001_01",
+  "node_id": "1.1.1.1",
+  "stage": "manual_finalize",
+  "current_status": "WAITING_MANUAL",
+  "current_stage": "WAITING_MANUAL",
+  "last_output_artifact": "artifacts/task_8995035889/nodes/uid_l4_001_01/text.json",
+  "generated_at": "2026-03-08T04:56:36.462625+00:00"
+}

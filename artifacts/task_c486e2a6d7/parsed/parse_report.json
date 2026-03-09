@@ -1,0 +1,18 @@
+{
+  "task_id": "task_c486e2a6d7",
+  "source_file": "artifacts/task_c486e2a6d7/input/input.docx",
+  "result": "PASS",
+  "paragraph_count": 0,
+  "subsystem_count": 1,
+  "missing_fields": [
+    "project.name",
+    "scope.overview",
+    "scope.subsystems",
+    "constraints.standards",
+    "constraints.acceptance"
+  ],
+  "warnings": [
+    "TODO: replace rule-based parser with richer extraction in later rounds"
+  ],
+  "generated_at": "2026-03-08T04:34:15.682800+00:00"
+}

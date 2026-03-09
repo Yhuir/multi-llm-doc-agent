@@ -60,6 +60,37 @@ class TaskRepository:
             rows = conn.execute("SELECT * FROM task ORDER BY created_at DESC").fetchall()
         return [self._row_to_task(row) for row in rows]
 
+    def list_by_status(self, status: TaskStatus, limit: int = 50) -> list[Task]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM task
+                WHERE status = ?
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (status.value, limit),
+            ).fetchall()
+        return [self._row_to_task(row) for row in rows]
+
+    def list_worker_runnable(self, limit: int = 1) -> list[Task]:
+        """Return runnable tasks for worker in deterministic order."""
+        runnable = (
+            TaskStatus.GENERATING.value,
+            TaskStatus.LAYOUTING.value,
+            TaskStatus.EXPORTING.value,
+        )
+        placeholders = ", ".join(["?"] * len(runnable))
+        query = f"""
+            SELECT * FROM task
+            WHERE status IN ({placeholders})
+            ORDER BY updated_at ASC
+            LIMIT ?
+        """
+        with self.db.connection() as conn:
+            rows = conn.execute(query, (*runnable, limit)).fetchall()
+        return [self._row_to_task(row) for row in rows]
+
     def list_resumable(self, limit: int = 20) -> list[Task]:
         resumable = (
             TaskStatus.NEW.value,

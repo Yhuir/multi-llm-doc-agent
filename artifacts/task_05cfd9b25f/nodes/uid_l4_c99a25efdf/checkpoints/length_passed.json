@@ -1,0 +1,26 @@
+{
+  "task_id": "task_05cfd9b25f",
+  "node_uid": "uid_l4_c99a25efdf",
+  "node_id": "1.15.4.1",
+  "status": "LENGTH_PASSED",
+  "current_stage": "LENGTH_PASSED",
+  "input_snapshot_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_c99a25efdf/snapshots/length_input.json",
+  "output_artifact_path": "artifacts/task_05cfd9b25f/nodes/uid_l4_c99a25efdf/length_control.json",
+  "last_error": null,
+  "retry_text": 0,
+  "retry_image": 4,
+  "retry_fact": 0,
+  "duration_ms": 1,
+  "metrics": {
+    "stage": "length",
+    "progress": 0.84,
+    "word_count": 2040,
+    "grounded_ratio": 1.0,
+    "image_score_avg": 0.715,
+    "manual_image_count": 1,
+    "table_count": 0,
+    "consistency_issue_count": 0,
+    "image_manual_required": true
+  },
+  "created_at": "2026-03-08T11:38:41.503201+00:00"
+}

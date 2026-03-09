@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_0113600970",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "电气安装与设备交接验收标准",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "电气安装与设备交接验收标准实施范围与",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "安装",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "验收",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    }
+  ]
+}

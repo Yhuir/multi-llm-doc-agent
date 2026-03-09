@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_4dc9624927",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "资料与手续验收",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "资料与手续验收实施范围与目标",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "验收",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    }
+  ]
+}

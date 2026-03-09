@@ -1,0 +1,10 @@
+{
+  "task_id": "task_e333fa03f3",
+  "node_uid": "uid_l4_001_01",
+  "node_id": "1.1.1.1",
+  "stage": "finalize",
+  "current_status": "LAYOUTED",
+  "current_stage": "LAYOUTED",
+  "last_output_artifact": "artifacts/task_e333fa03f3/nodes/uid_l4_001_01/layout_blocks.json",
+  "generated_at": "2026-03-08T04:46:44.724282+00:00"
+}

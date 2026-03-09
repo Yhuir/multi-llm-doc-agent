@@ -1,0 +1,1018 @@
+{
+  "project": {
+    "name": "一、设备安装与改造阶段详细工作 (一级目录）",
+    "customer": "",
+    "location": "",
+    "duration_days": null,
+    "milestones": []
+  },
+  "scope": {
+    "overview": "一、设备安装与改造阶段详细工作 (一级目录）",
+    "subsystems": [
+      {
+        "name": "1. 制冷站电控系统升级改造（工期60天） （子系统）",
+        "description": "1. 制冷站电控系统升级改造（工期60天） （子系统）",
+        "requirements": [
+          {
+            "type": "text",
+            "key": "scope",
+            "value": "1. 制冷站电控系统升级改造（工期60天） （子系统）",
+            "source_ref": "p1#L1"
+          }
+        ],
+        "interfaces": []
+      }
+    ]
+  },
+  "constraints": {
+    "standards": [],
+    "acceptance": []
+  },
+  "source_index": {
+    "p1#L1": {
+      "page": 1,
+      "paragraph_id": "para_1",
+      "text": "一、设备安装与改造阶段详细工作 (一级目录）"
+    },
+    "p1#L2": {
+      "page": 1,
+      "paragraph_id": "para_2",
+      "text": "1. 制冷站电控系统升级改造（工期60天） （子系统）"
+    },
+    "p1#L3": {
+      "page": 1,
+      "paragraph_id": "para_3",
+      "text": "保护性拆除  (二级目录）"
+    },
+    "p1#L4": {
+      "page": 1,
+      "paragraph_id": "para_4",
+      "text": "1.1.1拆除旧PLC机架、CPU、通讯模块  (三级目录）"
+    },
+    "p1#L5": {
+      "page": 1,
+      "paragraph_id": "para_5",
+      "text": "制冷站电控系统升级过程中，对原有PLC机架、CPU模块、通讯模块进行保护性拆除。拆除前需确保系统已断电，并做好标记与记录，以便后续新设备安装或旧设备回收。"
+    },
+    "p1#L6": {
+      "page": 1,
+      "paragraph_id": "para_6",
+      "text": "工具材料"
+    },
+    "p1#L7": {
+      "page": 1,
+      "paragraph_id": "para_7",
+      "text": "防静电手环、防静电垫"
+    },
+    "p1#L8": {
+      "page": 1,
+      "paragraph_id": "para_8",
+      "text": "十字/一字螺丝刀、内六角扳手"
+    },
+    "p1#L9": {
+      "page": 1,
+      "paragraph_id": "para_9",
+      "text": "斜口钳、剥线钳"
+    },
+    "p1#L10": {
+      "page": 1,
+      "paragraph_id": "para_10",
+      "text": "标签纸、记号笔、数码相机"
+    },
+    "p1#L11": {
+      "page": 1,
+      "paragraph_id": "para_11",
+      "text": "防静电包装袋、泡沫箱、气泡膜"
+    },
+    "p1#L12": {
+      "page": 1,
+      "paragraph_id": "para_12",
+      "text": "万用表（必要时验证断电）"
+    },
+    "p1#L13": {
+      "page": 1,
+      "paragraph_id": "para_13",
+      "text": "人员安排"
+    },
+    "p1#L14": {
+      "page": 1,
+      "paragraph_id": "para_14",
+      "text": "电气工程师1名（负责拆线和模块标记）、自控工程师1名（负责核对点位和记录）、安全监护1名（确保操作安全）"
+    },
+    "p1#L15": {
+      "page": 1,
+      "paragraph_id": "para_15",
+      "text": "安全措施"
+    },
+    "p1#L16": {
+      "page": 1,
+      "paragraph_id": "para_16",
+      "text": "确认PLC柜已切断主电源，并悬挂“禁止合闸”警示牌"
+    },
+    "p1#L17": {
+      "page": 1,
+      "paragraph_id": "para_17",
+      "text": "穿戴绝缘鞋、安全帽"
+    },
+    "p1#L18": {
+      "page": 1,
+      "paragraph_id": "para_18",
+      "text": "作业区域拉设警戒线，无关人员禁止入内"
+    },
+    "p1#L19": {
+      "page": 1,
+      "paragraph_id": "para_19",
+      "text": "拆除步骤"
+    },
+    "p1#L20": {
+      "page": 1,
+      "paragraph_id": "para_20",
+      "text": "断电与验电"
+    },
+    "p1#L21": {
+      "page": 1,
+      "paragraph_id": "para_21",
+      "text": "断开PLC柜电源开关并锁定，使用万用表测量PLC电源模块输入端确认无电压"
+    },
+    "p1#L22": {
+      "page": 1,
+      "paragraph_id": "para_22",
+      "text": "标记与记录"
+    },
+    "p1#L23": {
+      "page": 1,
+      "paragraph_id": "para_23",
+      "text": "对每一根与PLC相连的线缆（电源线、通讯线、I/O线）贴标签，注明原接线位置和用途"
+    },
+    "p1#L24": {
+      "page": 1,
+      "paragraph_id": "para_24",
+      "text": "拍照记录PLC柜内部整体布局、模块排列顺序、接线端子编号"
+    },
+    "p1#L25": {
+      "page": 1,
+      "paragraph_id": "para_25",
+      "text": "拆除通讯线缆"
+    },
+    "p1#L26": {
+      "page": 1,
+      "paragraph_id": "para_26",
+      "text": "先拆除所有通讯线缆（如以太网、RS485、Profibus等），用标签标记两端"
+    },
+    "p1#L27": {
+      "page": 1,
+      "paragraph_id": "para_27",
+      "text": "将通讯线缆从模块接口拔下，用防尘帽保护接口"
+    },
+    "p1#L28": {
+      "page": 1,
+      "paragraph_id": "para_28",
+      "text": "拆除CPU模块及电池"
+    },
+    "p1#L29": {
+      "page": 1,
+      "paragraph_id": "para_29",
+      "text": "若CPU模块有备份电池，先取出电池单独包装（防止短路）"
+    },
+    "p1#L30": {
+      "page": 1,
+      "paragraph_id": "para_30",
+      "text": "松开模块固定螺丝或卡扣，垂直拔出CPU模块，放入防静电袋"
+    },
+    "p1#L31": {
+      "page": 1,
+      "paragraph_id": "para_31",
+      "text": "拆除通讯模块"
+    },
+    "p1#L32": {
+      "page": 1,
+      "paragraph_id": "para_32",
+      "text": "按顺序拆除通讯模块，同样做好标记，放入防静电袋"
+    },
+    "p1#L33": {
+      "page": 1,
+      "paragraph_id": "para_33",
+      "text": "拆除电源模块"
+    },
+    "p1#L34": {
+      "page": 1,
+      "paragraph_id": "para_34",
+      "text": "确认电源模块输入输出线已标记并拆除，然后卸下电源模块"
+    },
+    "p1#L35": {
+      "page": 1,
+      "paragraph_id": "para_35",
+      "text": "拆除机架（背板）"
+    },
+    "p1#L36": {
+      "page": 1,
+      "paragraph_id": "para_36",
+      "text": "拆除机架上的所有模块后，卸下机架固定螺丝"
+    },
+    "p1#L37": {
+      "page": 1,
+      "paragraph_id": "para_37",
+      "text": "小心取下机架，检查背板是否有残留接线，清理后包装"
+    },
+    "p1#L38": {
+      "page": 1,
+      "paragraph_id": "para_38",
+      "text": "清理与封堵"
+    },
+    "p1#L39": {
+      "page": 1,
+      "paragraph_id": "para_39",
+      "text": "拆除后清理柜内灰尘和线头"
+    },
+    "p1#L40": {
+      "page": 1,
+      "paragraph_id": "para_40",
+      "text": "对暂时不用的开孔进行临时封堵"
+    },
+    "p1#L41": {
+      "page": 1,
+      "paragraph_id": "para_41",
+      "text": "注意事项"
+    },
+    "p1#L42": {
+      "page": 1,
+      "paragraph_id": "para_42",
+      "text": "防静电"
+    },
+    "p1#L43": {
+      "page": 1,
+      "paragraph_id": "para_43",
+      "text": "操作人员必须佩戴防静电手环并接地"
+    },
+    "p1#L44": {
+      "page": 1,
+      "paragraph_id": "para_44",
+      "text": "模块放置在防静电垫或防静电袋中，避免接触高静电材料"
+    },
+    "p1#L45": {
+      "page": 1,
+      "paragraph_id": "para_45",
+      "text": "标记清晰"
+    },
+    "p1#L46": {
+      "page": 1,
+      "paragraph_id": "para_46",
+      "text": "标签需耐磨损，建议使用专用线号管或打印标签"
+    },
+    "p1#L47": {
+      "page": 1,
+      "paragraph_id": "para_47",
+      "text": "记录表格应包括：模块型号、位置、线缆编号、去向等"
+    },
+    "p1#L48": {
+      "page": 1,
+      "paragraph_id": "para_48",
+      "text": "模块保护"
+    },
+    "p1#L49": {
+      "page": 1,
+      "paragraph_id": "para_49",
+      "text": "轻拿轻放，避免碰撞模块引脚和接口"
+    },
+    "p1#L50": {
+      "page": 1,
+      "paragraph_id": "para_50",
+      "text": "CPU模块中的程序需提前备份（如需保留）"
+    },
+    "p1#L51": {
+      "page": 1,
+      "paragraph_id": "para_51",
+      "text": "安全第一"
+    },
+    "p1#L52": {
+      "page": 1,
+      "paragraph_id": "para_52",
+      "text": "严禁带电操作，拆除前务必验电"
+    },
+    "p1#L53": {
+      "page": 1,
+      "paragraph_id": "para_53",
+      "text": "若柜内有其他带电回路，应隔离或警示"
+    },
+    "p1#L54": {
+      "page": 1,
+      "paragraph_id": "para_54",
+      "text": "环境控制"
+    },
+    "p1#L55": {
+      "page": 1,
+      "paragraph_id": "para_55",
+      "text": "保持作业环境干燥，避免灰尘进入PLC插槽"
+    },
+    "p1#L56": {
+      "page": 1,
+      "paragraph_id": "para_56",
+      "text": "拆除后的模块尽快包装，防止受潮"
+    },
+    "p1#L57": {
+      "page": 1,
+      "paragraph_id": "para_57",
+      "text": "1.1.1 拆除旧PLC机架、CPU、通讯模块  (三级目录）"
+    },
+    "p1#L58": {
+      "page": 1,
+      "paragraph_id": "para_58",
+      "text": "1. 概述  (四级目录）"
+    },
+    "p1#L59": {
+      "page": 1,
+      "paragraph_id": "para_59",
+      "text": "针对制冷站现有AB ControlLogix系列PLC（机架1756-A10、CPU 1756-L61、以太网模块1756-ENBT）的保护性拆除作业。拆除后的设备需完好无损地移交招标人指定地点，或作为废旧物资处理。拆除过程中必须确保所有线缆标记清晰，为后续新设备安装提供准确依据。"
+    },
+    "p1#L60": {
+      "page": 1,
+      "paragraph_id": "para_60",
+      "text": "2. 工具与材料准备  (四级目录）"
+    },
+    "p1#L61": {
+      "page": 1,
+      "paragraph_id": "para_61",
+      "text": "类别"
+    },
+    "p1#L62": {
+      "page": 1,
+      "paragraph_id": "para_62",
+      "text": "工具/材料名称"
+    },
+    "p1#L63": {
+      "page": 1,
+      "paragraph_id": "para_63",
+      "text": "用途说明"
+    },
+    "p1#L64": {
+      "page": 1,
+      "paragraph_id": "para_64",
+      "text": "电工工具"
+    },
+    "p1#L65": {
+      "page": 1,
+      "paragraph_id": "para_65",
+      "text": "十字螺丝刀"
+    },
+    "p1#L66": {
+      "page": 1,
+      "paragraph_id": "para_66",
+      "text": "拆卸模块固定螺丝"
+    },
+    "p1#L67": {
+      "page": 1,
+      "paragraph_id": "para_67",
+      "text": "电工工具"
+    },
+    "p1#L68": {
+      "page": 1,
+      "paragraph_id": "para_68",
+      "text": "一字螺丝刀"
+    },
+    "p1#L69": {
+      "page": 1,
+      "paragraph_id": "para_69",
+      "text": "撬开卡扣、拆端子"
+    },
+    "p1#L70": {
+      "page": 1,
+      "paragraph_id": "para_70",
+      "text": "电工工具"
+    },
+    "p1#L71": {
+      "page": 1,
+      "paragraph_id": "para_71",
+      "text": "内六角扳手"
+    },
+    "p1#L72": {
+      "page": 1,
+      "paragraph_id": "para_72",
+      "text": "拆卸机架固定螺栓"
+    },
+    "p1#L73": {
+      "page": 1,
+      "paragraph_id": "para_73",
+      "text": "电工工具"
+    },
+    "p1#L74": {
+      "page": 1,
+      "paragraph_id": "para_74",
+      "text": "斜口钳"
+    },
+    "p1#L75": {
+      "page": 1,
+      "paragraph_id": "para_75",
+      "text": "剪断扎带"
+    },
+    "p1#L76": {
+      "page": 1,
+      "paragraph_id": "para_76",
+      "text": "电工工具"
+    },
+    "p1#L77": {
+      "page": 1,
+      "paragraph_id": "para_77",
+      "text": "剥线钳"
+    },
+    "p1#L78": {
+      "page": 1,
+      "paragraph_id": "para_78",
+      "text": "处理线头"
+    },
+    "p1#L79": {
+      "page": 1,
+      "paragraph_id": "para_79",
+      "text": "测量仪表"
+    },
+    "p1#L80": {
+      "page": 1,
+      "paragraph_id": "para_80",
+      "text": "万用表"
+    },
+    "p1#L81": {
+      "page": 1,
+      "paragraph_id": "para_81",
+      "text": "断电验电、通断测试"
+    },
+    "p1#L82": {
+      "page": 1,
+      "paragraph_id": "para_82",
+      "text": "标记材料"
+    },
+    "p1#L83": {
+      "page": 1,
+      "paragraph_id": "para_83",
+      "text": "标签纸、记号笔、线号管"
+    },
+    "p1#L84": {
+      "page": 1,
+      "paragraph_id": "para_84",
+      "text": "线缆标识、临时标记、永久线号"
+    },
+    "p1#L85": {
+      "page": 1,
+      "paragraph_id": "para_85",
+      "text": "记录设备"
+    },
+    "p1#L86": {
+      "page": 1,
+      "paragraph_id": "para_86",
+      "text": "数码相机"
+    },
+    "p1#L87": {
+      "page": 1,
+      "paragraph_id": "para_87",
+      "text": "拍照记录"
+    },
+    "p1#L88": {
+      "page": 1,
+      "paragraph_id": "para_88",
+      "text": "防护用品"
+    },
+    "p1#L89": {
+      "page": 1,
+      "paragraph_id": "para_89",
+      "text": "防静电手环"
+    },
+    "p1#L90": {
+      "page": 1,
+      "paragraph_id": "para_90",
+      "text": "全员佩戴"
+    },
+    "p1#L91": {
+      "page": 1,
+      "paragraph_id": "para_91",
+      "text": "防护用品"
+    },
+    "p1#L92": {
+      "page": 1,
+      "paragraph_id": "para_92",
+      "text": "防静电垫"
+    },
+    "p1#L93": {
+      "page": 1,
+      "paragraph_id": "para_93",
+      "text": "放置模块"
+    },
+    "p1#L94": {
+      "page": 1,
+      "paragraph_id": "para_94",
+      "text": "包装材料"
+    },
+    "p1#L95": {
+      "page": 1,
+      "paragraph_id": "para_95",
+      "text": "防静电袋"
+    },
+    "p1#L96": {
+      "page": 1,
+      "paragraph_id": "para_96",
+      "text": "包装模块"
+    },
+    "p1#L97": {
+      "page": 1,
+      "paragraph_id": "para_97",
+      "text": "包装材料"
+    },
+    "p1#L98": {
+      "page": 1,
+      "paragraph_id": "para_98",
+      "text": "气泡膜"
+    },
+    "p1#L99": {
+      "page": 1,
+      "paragraph_id": "para_99",
+      "text": "防震包装"
+    },
+    "p1#L100": {
+      "page": 1,
+      "paragraph_id": "para_100",
+      "text": "包装材料"
+    },
+    "p1#L101": {
+      "page": 1,
+      "paragraph_id": "para_101",
+      "text": "泡沫箱"
+    },
+    "p1#L102": {
+      "page": 1,
+      "paragraph_id": "para_102",
+      "text": "运输防护"
+    },
+    "p1#L103": {
+      "page": 1,
+      "paragraph_id": "para_103",
+      "text": "序号"
+    },
+    "p1#L104": {
+      "page": 1,
+      "paragraph_id": "para_104",
+      "text": "准备内容"
+    },
+    "p1#L105": {
+      "page": 1,
+      "paragraph_id": "para_105",
+      "text": "具体要求"
+    },
+    "p1#L106": {
+      "page": 1,
+      "paragraph_id": "para_106",
+      "text": "1"
+    },
+    "p1#L107": {
+      "page": 1,
+      "paragraph_id": "para_107",
+      "text": "程序备份"
+    },
+    "p1#L108": {
+      "page": 1,
+      "paragraph_id": "para_108",
+      "text": "使用RSLogix 5000软件上传现有程序，保存为.ACD文件，刻录光盘并存储至移动硬盘"
+    },
+    "p1#L109": {
+      "page": 1,
+      "paragraph_id": "para_109",
+      "text": "2"
+    },
+    "p1#L110": {
+      "page": 1,
+      "paragraph_id": "para_110",
+      "text": "图纸准备"
+    },
+    "p1#L111": {
+      "page": 1,
+      "paragraph_id": "para_111",
+      "text": "获取原柜内电气原理图、接线图、IO清单，打印成册供现场核对"
+    },
+    "p1#L112": {
+      "page": 1,
+      "paragraph_id": "para_112",
+      "text": "3"
+    },
+    "p1#L113": {
+      "page": 1,
+      "paragraph_id": "para_113",
+      "text": "标签模板"
+    },
+    "p1#L114": {
+      "page": 1,
+      "paragraph_id": "para_114",
+      "text": "提前打印标签模板，格式：设备代码-线号-去向（如：PLC1-AI01-温度传感器T101）"
+    },
+    "p1#L115": {
+      "page": 1,
+      "paragraph_id": "para_115",
+      "text": "4"
+    },
+    "p1#L116": {
+      "page": 1,
+      "paragraph_id": "para_116",
+      "text": "记录表格"
+    },
+    "p1#L117": {
+      "page": 1,
+      "paragraph_id": "para_117",
+      "text": "准备《PLC模块拆除记录表》，包含模块型号、序列号、位置、拆除人、日期等字段"
+    },
+    "p1#L118": {
+      "page": 1,
+      "paragraph_id": "para_118",
+      "text": "5"
+    },
+    "p1#L119": {
+      "page": 1,
+      "paragraph_id": "para_119",
+      "text": "风险评估"
+    },
+    "p1#L120": {
+      "page": 1,
+      "paragraph_id": "para_120",
+      "text": "识别作业风险（触电、短路、模块损坏），制定应急预案"
+    },
+    "p1#L121": {
+      "page": 1,
+      "paragraph_id": "para_121",
+      "text": "3. 技术准备  (四级目录）"
+    },
+    "p1#L122": {
+      "page": 1,
+      "paragraph_id": "para_122",
+      "text": "4. 拆除步骤（详细分解） (四级目录）"
+    },
+    "p1#L123": {
+      "page": 1,
+      "paragraph_id": "para_123",
+      "text": "第一步：断电与验电（耗时15分钟）"
+    },
+    "p1#L124": {
+      "page": 1,
+      "paragraph_id": "para_124",
+      "text": "办理停电工作票，经招标人现场负责人签字确认。"
+    },
+    "p1#L125": {
+      "page": 1,
+      "paragraph_id": "para_125",
+      "text": "断开PLC柜主电源开关（Q01），挂“禁止合闸，有人工作”警示牌。"
+    },
+    "p1#L126": {
+      "page": 1,
+      "paragraph_id": "para_126",
+      "text": "使用万用表交流电压档测量电源模块输入端L/N（或L+/M），确认电压为0V。"
+    },
+    "p1#L127": {
+      "page": 1,
+      "paragraph_id": "para_127",
+      "text": "使用万用表直流电压档测量24V输出端，确认无电压。"
+    },
+    "p1#L128": {
+      "page": 1,
+      "paragraph_id": "para_128",
+      "text": "等待5分钟，确保开关电源内部电容放电完毕。"
+    },
+    "p1#L129": {
+      "page": 1,
+      "paragraph_id": "para_129",
+      "text": "第二步：标记与记录（耗时60分钟）"
+    },
+    "p1#L130": {
+      "page": 1,
+      "paragraph_id": "para_130",
+      "text": "两人配合，一人指认线缆，一人贴标签并记录。"
+    },
+    "p1#L131": {
+      "page": 1,
+      "paragraph_id": "para_131",
+      "text": "按以下顺序标记："
+    },
+    "p1#L132": {
+      "page": 1,
+      "paragraph_id": "para_132",
+      "text": "电源线：标记电源类型（220VAC/24VDC）、来源、去向"
+    },
+    "p1#L133": {
+      "page": 1,
+      "paragraph_id": "para_133",
+      "text": "通讯线：标记协议类型（以太网/Profibus/RS485）、连接设备"
+    },
+    "p1#L134": {
+      "page": 1,
+      "paragraph_id": "para_134",
+      "text": "I/O线：对照IO清单，逐根标记线号、IO地址、设备名称"
+    },
+    "p1#L135": {
+      "page": 1,
+      "paragraph_id": "para_135",
+      "text": "使用数码相机多角度拍摄："
+    },
+    "p1#L136": {
+      "page": 1,
+      "paragraph_id": "para_136",
+      "text": "柜内全景图"
+    },
+    "p1#L137": {
+      "page": 1,
+      "paragraph_id": "para_137",
+      "text": "模块排列特写"
+    },
+    "p1#L138": {
+      "page": 1,
+      "paragraph_id": "para_138",
+      "text": "接线端子排特写"
+    },
+    "p1#L139": {
+      "page": 1,
+      "paragraph_id": "para_139",
+      "text": "线号标签特写"
+    },
+    "p1#L140": {
+      "page": 1,
+      "paragraph_id": "para_140",
+      "text": "填写《PLC模块拆除记录表》，记录模块型号、固件版本、插槽位置。"
+    },
+    "p1#L141": {
+      "page": 1,
+      "paragraph_id": "para_141",
+      "text": "第三步：拆除通讯线缆（耗时30分钟）"
+    },
+    "p1#L142": {
+      "page": 1,
+      "paragraph_id": "para_142",
+      "text": "先拆除以太网线：拔下RJ45插头，用防尘帽保护接口，线缆端贴标签后卷扎固定。"
+    },
+    "p1#L143": {
+      "page": 1,
+      "paragraph_id": "para_143",
+      "text": "拆除Profibus线：松开终端电阻，拔下DB9插头，保护接口。"
+    },
+    "p1#L144": {
+      "page": 1,
+      "paragraph_id": "para_144",
+      "text": "拆除RS485线：松开端子螺丝，取出线头，绝缘包扎。"
+    },
+    "p1#L145": {
+      "page": 1,
+      "paragraph_id": "para_145",
+      "text": "所有通讯线拆除后，分类绑扎，悬挂标识牌。"
+    },
+    "p1#L146": {
+      "page": 1,
+      "paragraph_id": "para_146",
+      "text": "第四步：拆除CPU模块（耗时20分钟）"
+    },
+    "p1#L147": {
+      "page": 1,
+      "paragraph_id": "para_147",
+      "text": "若CPU有备份电池，先取出电池（注意正负极），单独装入防静电袋，标注“电池-1756-L61”。"
+    },
+    "p1#L148": {
+      "page": 1,
+      "paragraph_id": "para_148",
+      "text": "松开CPU模块上下卡扣（或固定螺丝），用双手垂直向上拔出模块。"
+    },
+    "p1#L149": {
+      "page": 1,
+      "paragraph_id": "para_149",
+      "text": "立即将CPU放入防静电袋，封口，贴标签注明模块型号、原位置、拆除日期。"
+    },
+    "p1#L150": {
+      "page": 1,
+      "paragraph_id": "para_150",
+      "text": "将CPU放入泡沫箱，四周填充气泡膜。"
+    },
+    "p1#L151": {
+      "page": 1,
+      "paragraph_id": "para_151",
+      "text": "第五步：拆除通讯模块（耗时15分钟）"
+    },
+    "p1#L152": {
+      "page": 1,
+      "paragraph_id": "para_152",
+      "text": "按顺序拆除以太网模块1756-ENBT、其他通讯模块。"
+    },
+    "p1#L153": {
+      "page": 1,
+      "paragraph_id": "para_153",
+      "text": "每个模块拆除后立即放入防静电袋，贴标签。"
+    },
+    "p1#L154": {
+      "page": 1,
+      "paragraph_id": "para_154",
+      "text": "记录每个模块原插槽位置。"
+    },
+    "p1#L155": {
+      "page": 1,
+      "paragraph_id": "para_155",
+      "text": "第六步：拆除电源模块（耗时15分钟）"
+    },
+    "p1#L156": {
+      "page": 1,
+      "paragraph_id": "para_156",
+      "text": "确认电源模块输入输出线已全部拆除并标记。"
+    },
+    "p1#L157": {
+      "page": 1,
+      "paragraph_id": "para_157",
+      "text": "松开电源模块固定螺丝，垂直拔出。"
+    },
+    "p1#L158": {
+      "page": 1,
+      "paragraph_id": "para_158",
+      "text": "放入防静电袋，贴标签。"
+    },
+    "p1#L159": {
+      "page": 1,
+      "paragraph_id": "para_159",
+      "text": "第七步：拆除机架（耗时30分钟）"
+    },
+    "p1#L160": {
+      "page": 1,
+      "paragraph_id": "para_160",
+      "text": "检查机架背面及侧面是否有其他固定连接。"
+    },
+    "p1#L161": {
+      "page": 1,
+      "paragraph_id": "para_161",
+      "text": "使用内六角扳手拆除机架固定螺栓（通常4-6颗）。"
+    },
+    "p1#L162": {
+      "page": 1,
+      "paragraph_id": "para_162",
+      "text": "两人配合，小心取下机架，注意背板不要碰撞。"
+    },
+    "p1#L163": {
+      "page": 1,
+      "paragraph_id": "para_163",
+      "text": "检查机架背板插针有无弯曲，清理后包装。"
+    },
+    "p1#L164": {
+      "page": 1,
+      "paragraph_id": "para_164",
+      "text": "第八步：清理与封堵（耗时20分钟）"
+    },
+    "p1#L165": {
+      "page": 1,
+      "paragraph_id": "para_165",
+      "text": "使用吸尘器清理柜内灰尘、线头、金属屑。"
+    },
+    "p1#L166": {
+      "page": 1,
+      "paragraph_id": "para_166",
+      "text": "对暂时不用的电缆穿线孔进行临时封堵（防火泥）。"
+    },
+    "p1#L167": {
+      "page": 1,
+      "paragraph_id": "para_167",
+      "text": "整理剩余线缆，用扎带理顺。"
+    },
+    "p1#L168": {
+      "page": 1,
+      "paragraph_id": "para_168",
+      "text": "5. 注意事项与风险控制   (四级目录）"
+    },
+    "p1#L169": {
+      "page": 1,
+      "paragraph_id": "para_169",
+      "text": "风险类型"
+    },
+    "p1#L170": {
+      "page": 1,
+      "paragraph_id": "para_170",
+      "text": "可能后果"
+    },
+    "p1#L171": {
+      "page": 1,
+      "paragraph_id": "para_171",
+      "text": "预防措施"
+    },
+    "p1#L172": {
+      "page": 1,
+      "paragraph_id": "para_172",
+      "text": "应急处理"
+    },
+    "p1#L173": {
+      "page": 1,
+      "paragraph_id": "para_173",
+      "text": "触电"
+    },
+    "p1#L174": {
+      "page": 1,
+      "paragraph_id": "para_174",
+      "text": "人员伤亡"
+    },
+    "p1#L175": {
+      "page": 1,
+      "paragraph_id": "para_175",
+      "text": "严格执行断电挂牌，验电确认"
+    },
+    "p1#L176": {
+      "page": 1,
+      "paragraph_id": "para_176",
+      "text": "立即断电，实施急救，拨打120"
+    },
+    "p1#L177": {
+      "page": 1,
+      "paragraph_id": "para_177",
+      "text": "静电损坏"
+    },
+    "p1#L178": {
+      "page": 1,
+      "paragraph_id": "para_178",
+      "text": "模块报废"
+    },
+    "p1#L179": {
+      "page": 1,
+      "paragraph_id": "para_179",
+      "text": "全员佩戴防静电手环，铺设防静电垫"
+    },
+    "p1#L180": {
+      "page": 1,
+      "paragraph_id": "para_180",
+      "text": "更换损坏模块，分析原因"
+    },
+    "p1#L181": {
+      "page": 1,
+      "paragraph_id": "para_181",
+      "text": "标记错误"
+    },
+    "p1#L182": {
+      "page": 1,
+      "paragraph_id": "para_182",
+      "text": "后续接线困难"
+    },
+    "p1#L183": {
+      "page": 1,
+      "paragraph_id": "para_183",
+      "text": "双人核对，拍照记录"
+    },
+    "p1#L184": {
+      "page": 1,
+      "paragraph_id": "para_184",
+      "text": "对照照片重新核对"
+    },
+    "p1#L185": {
+      "page": 1,
+      "paragraph_id": "para_185",
+      "text": "模块掉落"
+    },
+    "p1#L186": {
+      "page": 1,
+      "paragraph_id": "para_186",
+      "text": "物理损坏"
+    },
+    "p1#L187": {
+      "page": 1,
+      "paragraph_id": "para_187",
+      "text": "轻拿轻放，使用防静电袋"
+    },
+    "p1#L188": {
+      "page": 1,
+      "paragraph_id": "para_188",
+      "text": "检查损坏程度，必要时更换"
+    },
+    "p1#L189": {
+      "page": 1,
+      "paragraph_id": "para_189",
+      "text": "线头短路"
+    },
+    "p1#L190": {
+      "page": 1,
+      "paragraph_id": "para_190",
+      "text": "设备误动"
+    },
+    "p1#L191": {
+      "page": 1,
+      "paragraph_id": "para_191",
+      "text": "拆除线头立即绝缘包扎"
+    },
+    "p1#L192": {
+      "page": 1,
+      "paragraph_id": "para_192",
+      "text": "检查熔断器，更换损坏元件"
+    },
+    "p1#L193": {
+      "page": 1,
+      "paragraph_id": "para_193",
+      "text": "6. 交付物"
+    },
+    "p1#L194": {
+      "page": 1,
+      "paragraph_id": "para_194",
+      "text": "《PLC模块拆除记录表》（纸质+电子版）"
+    },
+    "p1#L195": {
+      "page": 1,
+      "paragraph_id": "para_195",
+      "text": "拆除过程照片（电子版，分类存档）"
+    },
+    "p1#L196": {
+      "page": 1,
+      "paragraph_id": "para_196",
+      "text": "原PLC程序备份（.ACD文件，光盘+移动硬盘）"
+    },
+    "p1#L197": {
+      "page": 1,
+      "paragraph_id": "para_197",
+      "text": "标签清单（Excel格式）"
+    }
+  }
+}

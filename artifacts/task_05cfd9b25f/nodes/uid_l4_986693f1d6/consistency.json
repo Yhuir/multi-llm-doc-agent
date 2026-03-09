@@ -1,0 +1,113 @@
+{
+  "node_uid": "uid_l4_986693f1d6",
+  "result": "PASS",
+  "checks": {
+    "entity_consistency": {
+      "result": "PASS",
+      "issues": []
+    },
+    "term_consistency": {
+      "result": "PASS",
+      "issues": [
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s01_p01",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s01_p04",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s02_p01",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s02_p04",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s03_p01",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s03_p04",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s04_p01",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s04_p04",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s05_p01",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        },
+        {
+          "issue_type": "TERM_VARIANT",
+          "location": "paragraph:s05_p04",
+          "detail": "术语表达 `需` 与规范表达不一致。",
+          "suggestion": "统一为 `应`。",
+          "fix_action": "`需` -> `应`",
+          "fixable": true,
+          "fixed": true
+        }
+      ]
+    },
+    "constraint_consistency": {
+      "result": "PASS",
+      "issues": []
+    },
+    "reference_consistency": {
+      "result": "PASS",
+      "issues": []
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_66a0f7ed0d",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "第三方系统接入兼容性要求",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "第三方系统接入兼容性要求实施范围与目",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "第三方系统接入兼容性要求施工准备与资",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

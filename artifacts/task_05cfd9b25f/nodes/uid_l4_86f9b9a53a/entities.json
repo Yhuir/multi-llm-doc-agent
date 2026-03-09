@@ -1,0 +1,41 @@
+{
+  "node_uid": "uid_l4_86f9b9a53a",
+  "entities": [
+    {
+      "entity_id": "ent_001",
+      "name": "分系统改造与整体协同原则",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_002",
+      "name": "分系统改造与整体协同原则实施范围与目",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_003",
+      "name": "施工",
+      "category": "process",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_004",
+      "name": "现场",
+      "category": "scene",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_005",
+      "name": "检查",
+      "category": "acceptance",
+      "must_have": true
+    },
+    {
+      "entity_id": "ent_006",
+      "name": "分系统改造与整体协同原则施工准备与资",
+      "category": "process",
+      "must_have": true
+    }
+  ]
+}

@@ -2,31 +2,29 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import uuid
-import xml.etree.ElementTree as ET
-import zipfile
 from pathlib import Path
 from typing import Any
 
+from backend.agents import (
+    RequirementParserAgent,
+    TOCGeneratorAgent,
+    TOCReviewChatAgent,
+)
 from backend.models.enums import ChatRole, EventStatus, NodeStatus, TaskStatus
 from backend.models.schemas import (
     ChatMessage,
     EventLog,
     NodeState,
-    RequirementConstraints,
+    ParseReport,
     RequirementDocument,
-    RequirementItem,
-    RequirementProject,
-    RequirementScope,
-    RequirementSubsystem,
-    SourceIndexItem,
     TOCDocument,
     TOCNode,
     TOCVersion,
     utc_now_iso,
 )
+from backend.orchestrator.toc_outline_parser import build_toc_document_from_outline
 from backend.repositories.chat_message_repository import ChatMessageRepository
 from backend.repositories.event_log_repository import EventLogRepository
 from backend.repositories.node_state_repository import NodeStateRepository
@@ -60,6 +58,9 @@ class Orchestrator:
         chat_repository: ChatMessageRepository,
         node_runner: NodeRunner,
         artifacts_root: Path,
+        requirement_parser: RequirementParserAgent | None = None,
+        toc_generator: TOCGeneratorAgent | None = None,
+        toc_review_agent: TOCReviewChatAgent | None = None,
     ) -> None:
         self.task_repository = task_repository
         self.toc_repository = toc_repository
@@ -68,30 +69,78 @@ class Orchestrator:
         self.chat_repository = chat_repository
         self.node_runner = node_runner
         self.artifacts_root = artifacts_root
+        self.requirement_parser = requirement_parser or RequirementParserAgent()
+        self.toc_generator = toc_generator or TOCGeneratorAgent()
+        self.toc_review_agent = toc_review_agent or TOCReviewChatAgent()
 
-    def run_parse_and_generate_toc(self, task_id: str) -> TOCVersion:
+    def run_parse_requirement(self, task_id: str) -> dict[str, Any]:
         task = self._require_task(task_id)
+        if task.status != TaskStatus.NEW:
+            raise ValueError("Requirement parse can only run when task status is NEW.")
         if not task.upload_file_path:
             raise ValueError("Upload .docx file first.")
 
-        requirement = self._parse_requirement_docx(
-            Path(task.upload_file_path),
+        self._log(task_id, stage="PARSE", message="Requirement parse started.")
+        requirement, parse_report_payload = self.requirement_parser.parse(
+            task_id=task_id,
+            upload_file_path=Path(task.upload_file_path),
             fallback_title=task.title,
         )
+        parse_report = ParseReport.model_validate(parse_report_payload)
+
         requirement_path = self._task_path(task_id, "parsed", "requirement.json")
+        parse_report_path = self._task_path(task_id, "parsed", "parse_report.json")
         self._write_json(requirement_path, requirement.model_dump(mode="json"))
+        self._write_json(parse_report_path, parse_report.model_dump(mode="json"))
+
+        self._transition_task(task_id, TaskStatus.PARSED, current_stage="PARSED")
+        self.task_repository.update_progress(
+            task_id,
+            total_progress=0.1,
+            current_stage="PARSED",
+        )
         self._log(
             task_id,
             stage="PARSE",
-            message="Generated requirement.json",
+            message="Generated requirement.json and parse_report.json",
             output_artifact_path=str(requirement_path),
         )
+        self._log(
+            task_id,
+            stage="PARSE",
+            message="Generated parse_report.json",
+            output_artifact_path=str(parse_report_path),
+        )
+        return {
+            "task_id": task_id,
+            "requirement_path": str(requirement_path),
+            "parse_report_path": str(parse_report_path),
+            "parse_report": parse_report.model_dump(mode="json"),
+        }
 
-        self._transition_task(task_id, TaskStatus.PARSED, current_stage="PARSED")
+    def run_generate_toc(self, task_id: str) -> TOCVersion:
+        task = self._require_task(task_id)
+        if task.status == TaskStatus.NEW:
+            self.run_parse_requirement(task_id)
+            task = self._require_task(task_id)
+        if task.status != TaskStatus.PARSED:
+            raise ValueError("TOC generation requires task status PARSED.")
 
+        requirement_path = self._task_path(task_id, "parsed", "requirement.json")
+        if not requirement_path.exists():
+            raise ValueError("requirement.json missing. Parse requirement first.")
+
+        requirement = RequirementDocument.model_validate(
+            json.loads(requirement_path.read_text(encoding="utf-8"))
+        )
         latest = self.toc_repository.get_latest_version(task_id)
         version_no = 1 if latest is None else latest.version_no + 1
-        toc_doc = self._build_initial_toc(requirement=requirement, version_no=version_no)
+
+        toc_doc = self.toc_generator.generate(requirement=requirement, version_no=version_no)
+        self._renumber_node_ids(toc_doc.tree)
+        toc_doc.version = version_no
+        toc_doc.generated_at = utc_now_iso()
+        toc_doc.based_on_version = latest.version_no if latest else None
 
         toc_path = self._task_path(task_id, "toc", f"toc_v{version_no}.json")
         self._write_json(toc_path, toc_doc.model_dump(mode="json"))
@@ -99,9 +148,9 @@ class Orchestrator:
         diff_summary: dict[str, Any] | None = None
         based_on_version_no: int | None = None
         if latest is not None:
+            based_on_version_no = latest.version_no
             old_doc = self._load_toc(Path(latest.file_path))
             diff_summary = self._diff_toc(old_doc.tree, toc_doc.tree)
-            based_on_version_no = latest.version_no
 
         toc_version = TOCVersion(
             toc_version_id=f"tocv_{uuid.uuid4().hex[:12]}",
@@ -127,17 +176,36 @@ class Orchestrator:
             stage="TOC_GENERATE",
             message=f"Generated toc_v{version_no}.json",
             output_artifact_path=str(toc_path),
+            meta_json={"version_no": version_no},
         )
         return toc_version
 
-    def review_toc(self, task_id: str, feedback: str) -> TOCVersion:
+    # Backward-compatible method name used by earlier rounds.
+    def run_parse_and_generate_toc(self, task_id: str) -> TOCVersion:
+        return self.run_generate_toc(task_id)
+
+    def review_toc(
+        self,
+        task_id: str,
+        feedback: str,
+        *,
+        based_on_version_no: int | None = None,
+        review_config: dict[str, Any] | None = None,
+    ) -> TOCVersion:
         task = self._require_task(task_id)
         if task.status != TaskStatus.TOC_REVIEW:
             raise ValueError("TOC can only be reviewed during TOC_REVIEW stage.")
+        if task.confirmed_toc_version is not None:
+            raise ValueError("TOC already confirmed for this task. Create a derived task to modify.")
 
         latest = self.toc_repository.get_latest_version(task_id)
         if latest is None:
             raise ValueError("No TOC version exists yet.")
+
+        base_version_no = based_on_version_no or latest.version_no
+        base_version = self.toc_repository.get_version(task_id, base_version_no)
+        if base_version is None:
+            raise ValueError(f"TOC version {base_version_no} does not exist.")
 
         self.chat_repository.create(
             ChatMessage(
@@ -145,28 +213,36 @@ class Orchestrator:
                 task_id=task_id,
                 role=ChatRole.USER,
                 content=feedback,
-                related_toc_version=latest.version_no,
+                related_toc_version=base_version_no,
             )
         )
 
-        old_doc = self._load_toc(Path(latest.file_path))
-        new_doc = self._apply_feedback(old_doc, feedback)
+        old_doc = self._load_toc(Path(base_version.file_path))
+        new_doc = self.toc_review_agent.review(
+            toc_doc=old_doc,
+            feedback=feedback,
+            review_config=review_config,
+        )
+
         new_version_no = latest.version_no + 1
         new_doc.version = new_version_no
-        new_doc.based_on_version = latest.version_no
+        new_doc.based_on_version = base_version_no
         new_doc.generated_at = utc_now_iso()
+        self._renumber_node_ids(new_doc.tree)
 
-        self._renumber_generation_children(new_doc)
+        diff_summary = self._diff_toc(old_doc.tree, new_doc.tree)
+        if not self._has_effective_toc_diff(diff_summary):
+            raise ValueError("未根据审阅意见应用任何目录修改，请更具体地指出要修改的章节标题、位置或新增内容。")
+
         toc_path = self._task_path(task_id, "toc", f"toc_v{new_version_no}.json")
         self._write_json(toc_path, new_doc.model_dump(mode="json"))
 
-        diff_summary = self._diff_toc(old_doc.tree, new_doc.tree)
         toc_version = TOCVersion(
             toc_version_id=f"tocv_{uuid.uuid4().hex[:12]}",
             task_id=task_id,
             version_no=new_version_no,
             file_path=str(toc_path),
-            based_on_version_no=latest.version_no,
+            based_on_version_no=base_version_no,
             is_confirmed=False,
             diff_summary_json=diff_summary,
             created_by="user",
@@ -174,7 +250,7 @@ class Orchestrator:
         self.toc_repository.create_version(toc_version)
         self.toc_repository.replace_snapshots(task_id, new_version_no, new_doc.tree)
 
-        summary = f"Created toc_v{new_version_no} from feedback."
+        summary = f"Created toc_v{new_version_no} based on toc_v{base_version_no}."
         self.chat_repository.create(
             ChatMessage(
                 message_id=f"msg_{uuid.uuid4().hex[:12]}",
@@ -185,7 +261,115 @@ class Orchestrator:
             )
         )
 
-        self._log(task_id, stage="TOC_REVIEW", message=summary, output_artifact_path=str(toc_path))
+        self._log(
+            task_id,
+            stage="TOC_REVIEW",
+            message=summary,
+            output_artifact_path=str(toc_path),
+            meta_json={
+                "based_on_version_no": base_version_no,
+                "new_version_no": new_version_no,
+                "diff_summary": diff_summary,
+            },
+        )
+        return toc_version
+
+    def import_toc_outline(
+        self,
+        task_id: str,
+        outline_text: str,
+        *,
+        based_on_version_no: int | None = None,
+    ) -> TOCVersion:
+        task = self._require_task(task_id)
+        if task.status == TaskStatus.NEW:
+            self.run_parse_requirement(task_id)
+            task = self._require_task(task_id)
+
+        if task.status not in {TaskStatus.PARSED, TaskStatus.TOC_REVIEW}:
+            raise ValueError("TOC import requires task status NEW, PARSED or TOC_REVIEW.")
+        if task.confirmed_toc_version is not None:
+            raise ValueError("TOC already confirmed for this task. Create a derived task to modify.")
+
+        latest = self.toc_repository.get_latest_version(task_id)
+        if based_on_version_no is not None:
+            base_version = self.toc_repository.get_version(task_id, based_on_version_no)
+            if base_version is None:
+                raise ValueError(f"TOC version {based_on_version_no} does not exist.")
+        else:
+            base_version = latest
+
+        new_version_no = 1 if latest is None else latest.version_no + 1
+        toc_doc = build_toc_document_from_outline(
+            outline_text,
+            version_no=new_version_no,
+            based_on_version=base_version.version_no if base_version else None,
+        )
+
+        diff_summary: dict[str, Any] | None = None
+        if base_version is not None:
+            old_doc = self._load_toc(Path(base_version.file_path))
+            diff_summary = self._diff_toc(old_doc.tree, toc_doc.tree)
+            if not self._has_effective_toc_diff(diff_summary):
+                raise ValueError("导入的目录树与基准版本没有有效差异，请确认后再提交。")
+
+        toc_path = self._task_path(task_id, "toc", f"toc_v{new_version_no}.json")
+        outline_path = self._task_path(task_id, "toc", f"toc_outline_v{new_version_no}.txt")
+        outline_path.write_text(outline_text.strip() + "\n", encoding="utf-8")
+        self._write_json(toc_path, toc_doc.model_dump(mode="json"))
+
+        toc_version = TOCVersion(
+            toc_version_id=f"tocv_{uuid.uuid4().hex[:12]}",
+            task_id=task_id,
+            version_no=new_version_no,
+            file_path=str(toc_path),
+            based_on_version_no=base_version.version_no if base_version else None,
+            is_confirmed=False,
+            diff_summary_json=diff_summary,
+            created_by="user",
+        )
+        self.toc_repository.create_version(toc_version)
+        self.toc_repository.replace_snapshots(task_id, new_version_no, toc_doc.tree)
+
+        self.chat_repository.create(
+            ChatMessage(
+                message_id=f"msg_{uuid.uuid4().hex[:12]}",
+                task_id=task_id,
+                role=ChatRole.USER,
+                content=f"导入完整目录树（共 {len([line for line in outline_text.splitlines() if line.strip()])} 行）",
+                related_toc_version=new_version_no,
+            )
+        )
+        self.chat_repository.create(
+            ChatMessage(
+                message_id=f"msg_{uuid.uuid4().hex[:12]}",
+                task_id=task_id,
+                role=ChatRole.ASSISTANT,
+                content=f"已导入目录树并创建 toc_v{new_version_no}。",
+                related_toc_version=new_version_no,
+            )
+        )
+
+        if task.status == TaskStatus.PARSED:
+            self._transition_task(task_id, TaskStatus.TOC_REVIEW, current_stage="TOC_REVIEW")
+
+        self.task_repository.update_progress(
+            task_id,
+            total_progress=0.2,
+            current_stage="TOC_REVIEW",
+        )
+        self._log(
+            task_id,
+            stage="TOC_IMPORT",
+            message=f"Imported outline and created toc_v{new_version_no}.",
+            output_artifact_path=str(toc_path),
+            meta_json={
+                "based_on_version_no": base_version.version_no if base_version else None,
+                "new_version_no": new_version_no,
+                "outline_path": str(outline_path),
+                "diff_summary": diff_summary,
+            },
+        )
         return toc_version
 
     def confirm_toc(self, task_id: str, version_no: int) -> int:
@@ -243,6 +427,7 @@ class Orchestrator:
             stage="TOC_CONFIRM",
             message=f"Confirmed toc_v{version_no} and created {len(nodes)} node states.",
             output_artifact_path=str(confirmed_path),
+            meta_json={"confirmed_version_no": version_no, "seeded_nodes": len(nodes)},
         )
         return len(nodes)
 
@@ -250,9 +435,134 @@ class Orchestrator:
         task = self._require_task(task_id)
         if task.status != TaskStatus.GENERATING:
             raise ValueError("Task must be in GENERATING state.")
+        if task.confirmed_toc_version is None:
+            raise ValueError("TOC must be confirmed before generation.")
 
-        self._log(task_id, stage="WORKER", message="Starting node runner.")
-        self.node_runner.run_task(task_id)
+        self.task_repository.touch_heartbeat(task_id, stage="GENERATING", node_uid=None)
+        self._log(
+            task_id,
+            stage="WORKER_QUEUE",
+            message="Generation queued. Worker will pick this task.",
+        )
+
+    def confirm_and_start_generation(self, task_id: str, version_no: int) -> dict[str, Any]:
+        task = self._require_task(task_id)
+        if (
+            task.status == TaskStatus.GENERATING
+            and task.confirmed_toc_version == version_no
+            and task.total_nodes > 0
+        ):
+            self.start_generation(task_id)
+            refreshed = self._require_task(task_id)
+            return {
+                "seeded_nodes": refreshed.total_nodes,
+                "already_confirmed": True,
+                "task": refreshed,
+            }
+
+        seeded_nodes = self.confirm_toc(task_id, version_no)
+        self.start_generation(task_id)
+        refreshed = self._require_task(task_id)
+        return {
+            "seeded_nodes": seeded_nodes,
+            "already_confirmed": False,
+            "task": refreshed,
+        }
+
+    def run_worker_task(self, task_id: str) -> None:
+        """Run one worker cycle for a task and advance task-level state machine."""
+        task = self._require_task(task_id)
+        if task.status not in {TaskStatus.GENERATING, TaskStatus.LAYOUTING, TaskStatus.EXPORTING}:
+            raise ValueError(f"Task {task_id} is not runnable by worker: {task.status.value}")
+
+        if task.status == TaskStatus.GENERATING:
+            summary = self.node_runner.run_generation(task_id)
+            if summary.total_nodes == 0:
+                self._transition_task(
+                    task_id,
+                    TaskStatus.FAILED,
+                    current_stage="GENERATING",
+                    latest_error="No node_state found for generation.",
+                    finished_at=utc_now_iso(),
+                )
+                self._log(
+                    task_id,
+                    stage="GENERATING",
+                    message="Task failed: no node_state found.",
+                    meta_json={"summary": summary.__dict__},
+                )
+                return
+
+            if summary.failed_nodes > 0:
+                self._transition_task(
+                    task_id,
+                    TaskStatus.FAILED,
+                    current_stage="GENERATING",
+                    latest_error=f"{summary.failed_nodes} node(s) failed.",
+                    finished_at=utc_now_iso(),
+                )
+                self._log(
+                    task_id,
+                    stage="GENERATING",
+                    message="Task failed due to node failures.",
+                    meta_json={"summary": summary.__dict__},
+                )
+                return
+
+            self._transition_task(task_id, TaskStatus.LAYOUTING, current_stage="LAYOUTING")
+            self.task_repository.update_progress(
+                task_id,
+                total_progress=0.85,
+                current_stage="LAYOUTING",
+                current_node_uid=None,
+            )
+            self._log(
+                task_id,
+                stage="GENERATING",
+                message="All nodes finished. Entering LAYOUTING stage.",
+                meta_json={"summary": summary.__dict__},
+            )
+            task = self._require_task(task_id)
+
+        if task.status == TaskStatus.LAYOUTING:
+            layout_path = self.node_runner.run_layout(task_id)
+            self._transition_task(task_id, TaskStatus.EXPORTING, current_stage="EXPORTING")
+            self.task_repository.update_progress(
+                task_id,
+                total_progress=0.93,
+                current_stage="EXPORTING",
+                current_node_uid=None,
+            )
+            self._log(
+                task_id,
+                stage="LAYOUTING",
+                message="Layout stage completed.",
+                output_artifact_path=str(layout_path),
+            )
+            task = self._require_task(task_id)
+
+        if task.status == TaskStatus.EXPORTING:
+            output_path = self.node_runner.run_export(task_id)
+            completed_nodes = self.node_repository.count_completed(task_id)
+            self.task_repository.update_progress(
+                task_id,
+                completed_nodes=completed_nodes,
+                total_progress=1.0,
+                current_stage="DONE",
+                current_node_uid=None,
+            )
+            self._transition_task(
+                task_id,
+                TaskStatus.DONE,
+                current_stage="DONE",
+                finished_at=utc_now_iso(),
+            )
+            self._log(
+                task_id,
+                stage="DONE",
+                message="Task completed by worker.",
+                output_artifact_path=str(output_path),
+            )
 
     def _transition_task(
         self,
@@ -261,6 +571,7 @@ class Orchestrator:
         *,
         current_stage: str,
         latest_error: str | None = None,
+        finished_at: str | None = None,
     ) -> None:
         task = self._require_task(task_id)
         allowed = self._ALLOWED_TASK_TRANSITIONS.get(task.status, set())
@@ -275,6 +586,7 @@ class Orchestrator:
             new_status,
             current_stage=current_stage,
             latest_error=latest_error,
+            finished_at=finished_at,
         )
 
     def _require_task(self, task_id: str):
@@ -290,266 +602,117 @@ class Orchestrator:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _parse_requirement_docx(
-        self,
-        file_path: Path,
-        *,
-        fallback_title: str,
-    ) -> RequirementDocument:
-        if file_path.suffix.lower() != ".docx":
-            raise ValueError("Only .docx is supported.")
-
-        texts = self._extract_docx_text(file_path)
-        title = texts[0] if texts else fallback_title
-        source_index: dict[str, SourceIndexItem] = {}
-
-        for idx, text in enumerate(texts[:30], start=1):
-            key = f"p1#L{idx}"
-            source_index[key] = SourceIndexItem(
-                page=1,
-                paragraph_id=f"para_{idx}",
-                text=text,
-            )
-
-        standards = [
-            line for line in texts if "GB" in line.upper() or "ISO" in line.upper()
-        ]
-        acceptance = [line for line in texts if "验收" in line]
-
-        subsystem_seed = texts[1:4] if len(texts) > 1 else []
-        subsystems = []
-        if subsystem_seed:
-            for idx, seed in enumerate(subsystem_seed, start=1):
-                ref = f"p1#L{idx + 1}"
-                subsystems.append(
-                    RequirementSubsystem(
-                        name=f"子系统{idx}",
-                        description=seed,
-                        requirements=[
-                            RequirementItem(
-                                type="text",
-                                key="概要",
-                                value=seed,
-                                source_ref=ref,
-                            )
-                        ],
-                        interfaces=[],
-                    )
-                )
-        else:
-            subsystems.append(
-                RequirementSubsystem(
-                    name="子系统1",
-                    description="基础实施范围",
-                    requirements=[],
-                    interfaces=[],
-                )
-            )
-
-        return RequirementDocument(
-            project=RequirementProject(
-                name=title,
-                customer="",
-                location="",
-                duration_days=None,
-                milestones=[],
-            ),
-            scope=RequirementScope(
-                overview=texts[0] if texts else "",
-                subsystems=subsystems,
-            ),
-            constraints=RequirementConstraints(
-                standards=standards[:5],
-                acceptance=acceptance[:5],
-            ),
-            source_index=source_index,
-        )
-
-    @staticmethod
-    def _extract_docx_text(file_path: Path) -> list[str]:
-        try:
-            with zipfile.ZipFile(file_path) as archive:
-                xml_bytes = archive.read("word/document.xml")
-        except (zipfile.BadZipFile, KeyError) as exc:
-            raise ValueError(f"Cannot parse docx file: {file_path}") from exc
-
-        root = ET.fromstring(xml_bytes)
-        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-        lines: list[str] = []
-        for paragraph in root.findall(".//w:p", ns):
-            texts = [t.text for t in paragraph.findall(".//w:t", ns) if t.text]
-            merged = "".join(texts).strip()
-            if merged:
-                lines.append(merged)
-        return lines
-
-    def _build_initial_toc(self, *, requirement: RequirementDocument, version_no: int) -> TOCDocument:
-        root_uid = "uid_root_001"
-        level2_uid = "uid_l2_001"
-        children: list[TOCNode] = []
-
-        for idx, subsystem in enumerate(requirement.scope.subsystems, start=1):
-            children.append(
-                TOCNode(
-                    node_uid=f"uid_l3_{idx:03d}",
-                    node_id=f"1.1.{idx}",
-                    level=3,
-                    title=subsystem.name,
-                    is_generation_unit=True,
-                    source_refs=[],
-                    constraints={
-                        "min_words": 1800,
-                        "recommended_words": [1800, 2200],
-                        "images": [2, 3],
-                    },
-                    children=[],
-                )
-            )
-
-        tree = [
-            TOCNode(
-                node_uid=root_uid,
-                node_id="1",
-                level=1,
-                title="工程实施方案",
-                is_generation_unit=False,
-                source_refs=[],
-                constraints=None,
-                children=[
-                    TOCNode(
-                        node_uid=level2_uid,
-                        node_id="1.1",
-                        level=2,
-                        title=requirement.project.name,
-                        is_generation_unit=False,
-                        source_refs=[],
-                        constraints=None,
-                        children=children,
-                    )
-                ],
-            )
-        ]
-        return TOCDocument(version=version_no, based_on_version=None, tree=tree)
-
-    def _apply_feedback(self, toc_doc: TOCDocument, feedback: str) -> TOCDocument:
-        updated = copy.deepcopy(toc_doc)
-        normalized = feedback.lower().strip()
-
-        level2 = updated.tree[0].children[0] if updated.tree and updated.tree[0].children else None
-        if level2 is None:
-            return updated
-
-        generation_nodes = [node for node in level2.children if node.level == 3]
-        if not generation_nodes:
-            return updated
-
-        if "新增" in feedback or "增加" in feedback or "add" in normalized:
-            next_index = len(generation_nodes) + 1
-            level2.children.append(
-                TOCNode(
-                    node_uid=f"uid_l3_{uuid.uuid4().hex[:8]}",
-                    node_id=f"1.1.{next_index}",
-                    level=3,
-                    title=f"新增节点{next_index}",
-                    is_generation_unit=True,
-                    source_refs=[],
-                    constraints={
-                        "min_words": 1800,
-                        "recommended_words": [1800, 2200],
-                        "images": [2, 3],
-                    },
-                    children=[],
-                )
-            )
-        elif ("删除" in feedback or "remove" in normalized) and len(generation_nodes) > 1:
-            level2.children = level2.children[:-1]
-        else:
-            first = generation_nodes[0]
-            if "（修订）" not in first.title:
-                first.title = f"{first.title}（修订）"
-
-        return updated
-
-    def _renumber_generation_children(self, toc_doc: TOCDocument) -> None:
-        if not toc_doc.tree or not toc_doc.tree[0].children:
-            return
-        level2 = toc_doc.tree[0].children[0]
-        for idx, node in enumerate(level2.children, start=1):
-            if node.level == 3:
-                node.node_id = f"1.1.{idx}"
-
-    @staticmethod
-    def _load_toc(path: Path) -> TOCDocument:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return TOCDocument.model_validate(payload)
-
     def _diff_toc(self, old_tree: list[TOCNode], new_tree: list[TOCNode]) -> dict[str, Any]:
+        """Minimal tree diff for V1 UI: add/remove/reorder/title change.
+
+        TODO: keep move info for future use; rename is represented as title_change.
+        """
+
         old_map = self._flatten_toc(old_tree)
         new_map = self._flatten_toc(new_tree)
 
-        old_uids = set(old_map.keys())
-        new_uids = set(new_map.keys())
+        old_uids = set(old_map)
+        new_uids = set(new_map)
 
-        added_nodes = [new_map[uid] for uid in sorted(new_uids - old_uids)]
-        removed_nodes = [old_map[uid] for uid in sorted(old_uids - new_uids)]
+        added = [new_map[uid] for uid in sorted(new_uids - old_uids)]
+        removed = [old_map[uid] for uid in sorted(old_uids - new_uids)]
 
-        renamed_nodes = []
-        moved_nodes = []
-        reordered_nodes = []
+        title_change: list[dict[str, Any]] = []
+        reorder: list[dict[str, Any]] = []
+        move: list[dict[str, Any]] = []
 
         for uid in sorted(old_uids & new_uids):
-            old_node = old_map[uid]
-            new_node = new_map[uid]
-            if old_node["title"] != new_node["title"]:
-                renamed_nodes.append(
+            old_item = old_map[uid]
+            new_item = new_map[uid]
+
+            if old_item["title"] != new_item["title"]:
+                title_change.append(
                     {
                         "node_uid": uid,
-                        "from": old_node["title"],
-                        "to": new_node["title"],
+                        "from": old_item["title"],
+                        "to": new_item["title"],
+                        "node_id": new_item["node_id"],
                     }
                 )
-            if old_node["parent_node_uid"] != new_node["parent_node_uid"]:
-                moved_nodes.append(
+
+            if old_item["parent_node_uid"] != new_item["parent_node_uid"]:
+                move.append(
                     {
                         "node_uid": uid,
-                        "from": old_node["parent_node_uid"],
-                        "to": new_node["parent_node_uid"],
+                        "from_parent": old_item["parent_node_uid"],
+                        "to_parent": new_item["parent_node_uid"],
+                        "node_id": new_item["node_id"],
                     }
                 )
-            if old_node["node_id"] != new_node["node_id"]:
-                reordered_nodes.append(
+
+            if (
+                old_item["parent_node_uid"] == new_item["parent_node_uid"]
+                and old_item["order_in_parent"] != new_item["order_in_parent"]
+            ):
+                reorder.append(
                     {
                         "node_uid": uid,
-                        "from": old_node["node_id"],
-                        "to": new_node["node_id"],
+                        "node_id": new_item["node_id"],
+                        "from": old_item["order_in_parent"],
+                        "to": new_item["order_in_parent"],
                     }
                 )
 
         return {
-            "added_nodes": added_nodes,
-            "removed_nodes": removed_nodes,
-            "renamed_nodes": renamed_nodes,
-            "moved_nodes": moved_nodes,
-            "reordered_nodes": reordered_nodes,
+            "summary": {
+                "add_count": len(added),
+                "remove_count": len(removed),
+                "title_change_count": len(title_change),
+                "reorder_count": len(reorder),
+                "move_count": len(move),
+            },
+            "add": added,
+            "remove": removed,
+            "title_change": title_change,
+            "reorder": reorder,
+            "move": move,
         }
+
+    def _has_effective_toc_diff(self, diff_summary: dict[str, Any]) -> bool:
+        summary = diff_summary.get("summary") or {}
+        return any(
+            int(summary.get(key, 0)) > 0
+            for key in ("add_count", "remove_count", "title_change_count", "reorder_count", "move_count")
+        )
 
     def _flatten_toc(self, tree: list[TOCNode]) -> dict[str, dict[str, Any]]:
         flat: dict[str, dict[str, Any]] = {}
 
-        def walk(node: TOCNode, parent_uid: str | None) -> None:
+        def walk(node: TOCNode, parent_uid: str | None, order_in_parent: int) -> None:
             flat[node.node_uid] = {
                 "node_uid": node.node_uid,
                 "node_id": node.node_id,
                 "title": node.title,
                 "level": node.level,
                 "parent_node_uid": parent_uid,
+                "order_in_parent": order_in_parent,
             }
-            for child in node.children:
-                walk(child, node.node_uid)
+            for idx, child in enumerate(node.children, start=1):
+                walk(child, node.node_uid, idx)
 
-        for root in tree:
-            walk(root, None)
+        for root_idx, root in enumerate(tree, start=1):
+            walk(root, None, root_idx)
         return flat
+
+    def _renumber_node_ids(self, tree: list[TOCNode]) -> None:
+        for root_idx, root in enumerate(tree, start=1):
+            root.node_id = str(root_idx)
+            self._renumber_children(root)
+
+    def _renumber_children(self, parent: TOCNode) -> None:
+        for idx, child in enumerate(parent.children, start=1):
+            child.node_id = f"{parent.node_id}.{idx}"
+            self._renumber_children(child)
+
+    @staticmethod
+    def _load_toc(path: Path) -> TOCDocument:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return TOCDocument.model_validate(payload)
 
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -564,6 +727,7 @@ class Orchestrator:
         message: str,
         node_uid: str | None = None,
         output_artifact_path: str | None = None,
+        meta_json: dict[str, Any] | None = None,
     ) -> None:
         self.event_repository.create(
             EventLog(
@@ -574,5 +738,6 @@ class Orchestrator:
                 status=EventStatus.INFO,
                 message=message,
                 output_artifact_path=output_artifact_path,
+                meta_json=meta_json,
             )
         )

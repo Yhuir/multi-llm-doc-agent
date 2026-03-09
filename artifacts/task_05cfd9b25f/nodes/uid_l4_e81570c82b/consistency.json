@@ -1,0 +1,22 @@
+{
+  "node_uid": "uid_l4_e81570c82b",
+  "result": "PASS",
+  "checks": {
+    "entity_consistency": {
+      "result": "PASS",
+      "issues": []
+    },
+    "term_consistency": {
+      "result": "PASS",
+      "issues": []
+    },
+    "constraint_consistency": {
+      "result": "PASS",
+      "issues": []
+    },
+    "reference_consistency": {
+      "result": "PASS",
+      "issues": []
+    }
+  }
+}
