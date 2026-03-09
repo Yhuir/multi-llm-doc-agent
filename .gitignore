@@ -7,6 +7,8 @@
 
 # Local database
 app.db
+app.db-shm
+app.db-wal
 
 # Runtime artifacts
 artifacts/
