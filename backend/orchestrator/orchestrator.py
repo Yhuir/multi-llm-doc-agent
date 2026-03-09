@@ -24,6 +24,7 @@ from backend.models.schemas import (
     TOCVersion,
     utc_now_iso,
 )
+from backend.orchestrator.toc_outline_parser import build_toc_document_from_outline
 from backend.repositories.chat_message_repository import ChatMessageRepository
 from backend.repositories.event_log_repository import EventLogRepository
 from backend.repositories.node_state_repository import NodeStateRepository
@@ -268,6 +269,104 @@ class Orchestrator:
             meta_json={
                 "based_on_version_no": base_version_no,
                 "new_version_no": new_version_no,
+                "diff_summary": diff_summary,
+            },
+        )
+        return toc_version
+
+    def import_toc_outline(
+        self,
+        task_id: str,
+        outline_text: str,
+        *,
+        based_on_version_no: int | None = None,
+    ) -> TOCVersion:
+        task = self._require_task(task_id)
+        if task.status == TaskStatus.NEW:
+            self.run_parse_requirement(task_id)
+            task = self._require_task(task_id)
+
+        if task.status not in {TaskStatus.PARSED, TaskStatus.TOC_REVIEW}:
+            raise ValueError("TOC import requires task status NEW, PARSED or TOC_REVIEW.")
+        if task.confirmed_toc_version is not None:
+            raise ValueError("TOC already confirmed for this task. Create a derived task to modify.")
+
+        latest = self.toc_repository.get_latest_version(task_id)
+        if based_on_version_no is not None:
+            base_version = self.toc_repository.get_version(task_id, based_on_version_no)
+            if base_version is None:
+                raise ValueError(f"TOC version {based_on_version_no} does not exist.")
+        else:
+            base_version = latest
+
+        new_version_no = 1 if latest is None else latest.version_no + 1
+        toc_doc = build_toc_document_from_outline(
+            outline_text,
+            version_no=new_version_no,
+            based_on_version=base_version.version_no if base_version else None,
+        )
+
+        diff_summary: dict[str, Any] | None = None
+        if base_version is not None:
+            old_doc = self._load_toc(Path(base_version.file_path))
+            diff_summary = self._diff_toc(old_doc.tree, toc_doc.tree)
+            if not self._has_effective_toc_diff(diff_summary):
+                raise ValueError("导入的目录树与基准版本没有有效差异，请确认后再提交。")
+
+        toc_path = self._task_path(task_id, "toc", f"toc_v{new_version_no}.json")
+        outline_path = self._task_path(task_id, "toc", f"toc_outline_v{new_version_no}.txt")
+        outline_path.write_text(outline_text.strip() + "\n", encoding="utf-8")
+        self._write_json(toc_path, toc_doc.model_dump(mode="json"))
+
+        toc_version = TOCVersion(
+            toc_version_id=f"tocv_{uuid.uuid4().hex[:12]}",
+            task_id=task_id,
+            version_no=new_version_no,
+            file_path=str(toc_path),
+            based_on_version_no=base_version.version_no if base_version else None,
+            is_confirmed=False,
+            diff_summary_json=diff_summary,
+            created_by="user",
+        )
+        self.toc_repository.create_version(toc_version)
+        self.toc_repository.replace_snapshots(task_id, new_version_no, toc_doc.tree)
+
+        self.chat_repository.create(
+            ChatMessage(
+                message_id=f"msg_{uuid.uuid4().hex[:12]}",
+                task_id=task_id,
+                role=ChatRole.USER,
+                content=f"导入完整目录树（共 {len([line for line in outline_text.splitlines() if line.strip()])} 行）",
+                related_toc_version=new_version_no,
+            )
+        )
+        self.chat_repository.create(
+            ChatMessage(
+                message_id=f"msg_{uuid.uuid4().hex[:12]}",
+                task_id=task_id,
+                role=ChatRole.ASSISTANT,
+                content=f"已导入目录树并创建 toc_v{new_version_no}。",
+                related_toc_version=new_version_no,
+            )
+        )
+
+        if task.status == TaskStatus.PARSED:
+            self._transition_task(task_id, TaskStatus.TOC_REVIEW, current_stage="TOC_REVIEW")
+
+        self.task_repository.update_progress(
+            task_id,
+            total_progress=0.2,
+            current_stage="TOC_REVIEW",
+        )
+        self._log(
+            task_id,
+            stage="TOC_IMPORT",
+            message=f"Imported outline and created toc_v{new_version_no}.",
+            output_artifact_path=str(toc_path),
+            meta_json={
+                "based_on_version_no": base_version.version_no if base_version else None,
+                "new_version_no": new_version_no,
+                "outline_path": str(outline_path),
                 "diff_summary": diff_summary,
             },
         )

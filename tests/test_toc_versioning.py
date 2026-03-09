@@ -430,6 +430,97 @@ class TOCVersioningTestCase(unittest.TestCase):
         versions = self.service.list_toc_versions(task.task_id)
         self.assertEqual([item.version_no for item in versions], [1])
 
+    def test_import_outline_creates_toc_version_and_generation_units(self) -> None:
+        task = self.service.create_task("完整目录树导入测试")
+        sample_docx = create_sample_docx(
+            self.temp_root / "input_outline.docx",
+            [
+                "完整目录树导入测试项目",
+                "售后服务应覆盖电控系统、监控平台和网络系统。",
+                "维保过程应符合既有运维窗口与不停机要求。",
+                "质保期内应提供缺陷整改与免费升级服务。",
+            ],
+        )
+        self.service.save_upload(task.task_id, "input_outline.docx", sample_docx.read_bytes())
+
+        outline = "\n".join(
+            [
+                "一、售后服务总体方案",
+                "1.1 售后服务目标",
+                "1.1.1 保障系统安全稳定运行",
+                "1.1.2 满足生产不停机与分阶段改造后的运维要求",
+                "二、应急响应措施",
+                "2.1 应急响应总体机制",
+                "2.1.1 7×24小时响应机制",
+            ]
+        )
+
+        version = self.service.import_toc_outline(task.task_id, outline)
+
+        task_after = self.service.get_task(task.task_id)
+        imported = TOCDocument.model_validate(self.service.get_toc_document(task.task_id, version.version_no))
+        generation_units = self.service.toc_repository.list_generation_units(task.task_id, version.version_no)
+        parse_report = self.service.get_parse_report(task.task_id)
+
+        self.assertEqual(version.version_no, 1)
+        self.assertIsNotNone(task_after)
+        assert task_after is not None
+        self.assertEqual(task_after.status.value, "TOC_REVIEW")
+        self.assertIsNotNone(parse_report)
+        self.assertEqual([node.title for node in imported.tree[0].children], ["售后服务总体方案", "应急响应措施"])
+        self.assertEqual(imported.tree[0].children[0].children[0].title, "售后服务目标")
+        self.assertEqual(
+            [node.title for node in imported.tree[0].children[0].children[0].children],
+            ["保障系统安全稳定运行", "满足生产不停机与分阶段改造后的运维要求"],
+        )
+        self.assertTrue(all(item.level == 4 for item in generation_units))
+        self.assertEqual(
+            [item.title for item in generation_units],
+            [
+                "保障系统安全稳定运行",
+                "满足生产不停机与分阶段改造后的运维要求",
+                "7×24小时响应机制",
+            ],
+        )
+
+    def test_import_outline_accepts_arabic_top_level_numbering(self) -> None:
+        task = self.service.create_task("阿拉伯数字一级目录导入测试")
+        sample_docx = create_sample_docx(
+            self.temp_root / "input_outline_arabic.docx",
+            [
+                "阿拉伯数字一级目录导入测试项目",
+                "售后服务应覆盖维保、巡检、培训和应急响应。",
+                "系统运维应兼顾不停机生产和分阶段改造要求。",
+            ],
+        )
+        self.service.save_upload(task.task_id, "input_outline_arabic.docx", sample_docx.read_bytes())
+
+        outline = "\n".join(
+            [
+                "1. 售后服务总体方案",
+                "1.1 售后服务目标",
+                "1.1.1 保障系统安全稳定运行",
+                "2. 应急响应措施",
+                "2.1 应急响应总体机制",
+                "2.1.1 7×24小时响应机制",
+            ]
+        )
+
+        version = self.service.import_toc_outline(task.task_id, outline)
+        imported = TOCDocument.model_validate(self.service.get_toc_document(task.task_id, version.version_no))
+
+        self.assertEqual(version.version_no, 1)
+        self.assertEqual(
+            [node.title for node in imported.tree[0].children],
+            ["售后服务总体方案", "应急响应措施"],
+        )
+        self.assertEqual(imported.tree[0].children[0].node_id, "1.1")
+        self.assertEqual(imported.tree[0].children[1].node_id, "1.2")
+        self.assertEqual(
+            imported.tree[0].children[0].children[0].children[0].title,
+            "保障系统安全稳定运行",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

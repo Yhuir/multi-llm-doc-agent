@@ -24,6 +24,11 @@ class TOCReviewRequest(BaseModel):
     based_on_version_no: int | None = None
 
 
+class TOCImportRequest(BaseModel):
+    outline_text: str = Field(min_length=1)
+    based_on_version_no: int | None = None
+
+
 class TOCConfirmRequest(BaseModel):
     version_no: int
 
@@ -167,6 +172,21 @@ def review_toc(task_id: str, payload: TOCReviewRequest) -> dict[str, Any]:
         version = service.review_toc(
             task_id,
             payload.feedback,
+            based_on_version_no=payload.based_on_version_no,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    response = version.model_dump(mode="json")
+    response["toc_document"] = service.get_toc_document(task_id, version.version_no)
+    return response
+
+
+@app.post("/tasks/{task_id}/toc/import")
+def import_toc(task_id: str, payload: TOCImportRequest) -> dict[str, Any]:
+    try:
+        version = service.import_toc_outline(
+            task_id,
+            payload.outline_text,
             based_on_version_no=payload.based_on_version_no,
         )
     except ValueError as exc:

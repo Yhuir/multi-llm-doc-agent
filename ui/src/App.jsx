@@ -11,6 +11,7 @@ import {
   listNodes,
   getParseReport,
   getToc,
+  importTocOutline,
   listChat,
   listTasks,
   listTocVersions,
@@ -202,6 +203,7 @@ export default function App() {
   const [tocDoc, setTocDoc] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [feedback, setFeedback] = useState("");
+  const [outlineText, setOutlineText] = useState("");
   const [nodeStates, setNodeStates] = useState([]);
   const [recentLogs, setRecentLogs] = useState([]);
 
@@ -226,6 +228,13 @@ export default function App() {
   const visibleTocNodes = useMemo(() => getVisibleTocNodes(tocDoc?.tree || []), [tocDoc]);
 
   const canReviewToc = selectedTask?.status === "TOC_REVIEW";
+  const canImportToc =
+    !!selectedTaskId &&
+    (
+      (selectedTask?.status === "NEW" && !!selectedTask?.upload_file_name) ||
+      selectedTask?.status === "PARSED" ||
+      selectedTask?.status === "TOC_REVIEW"
+    );
   const tocNodeCount = useMemo(() => countTocNodes(visibleTocNodes), [visibleTocNodes]);
   const tocPreviewHeight = useMemo(
     () => Math.min(820, Math.max(280, tocNodeCount * 34)),
@@ -587,6 +596,45 @@ export default function App() {
     } catch {
       // Chat refresh is best-effort after review.
     }
+  }
+
+  async function handleImportToc(event) {
+    event.preventDefault();
+    if (!selectedTaskId) {
+      setError("请先选择任务");
+      return;
+    }
+    if (!outlineText.trim()) {
+      setError("请先粘贴完整目录树");
+      return;
+    }
+
+    const result = await withAction(
+      () => importTocOutline(selectedTaskId, outlineText.trim(), selectedVersionNo || null),
+      "完整目录树已导入",
+      "正在导入完整目录树"
+    );
+    if (!result) return;
+
+    setOutlineText("");
+
+    if (result.toc_document) {
+      setSelectedVersionNo(result.version_no);
+      setTocDoc(result.toc_document);
+    }
+    setTocVersions((current) => upsertTocVersion(current, {
+      toc_version_id: result.toc_version_id,
+      task_id: result.task_id,
+      version_no: result.version_no,
+      file_path: result.file_path,
+      based_on_version_no: result.based_on_version_no,
+      is_confirmed: result.is_confirmed,
+      diff_summary_json: result.diff_summary_json,
+      created_by: result.created_by,
+      created_at: result.created_at
+    }));
+
+    await refreshCurrentTask(result.version_no);
   }
 
   async function handleConfirmAndStart() {
@@ -978,9 +1026,14 @@ export default function App() {
 
       <section className="card">
         <h2>目录版本与审阅</h2>
-        {!canReviewToc && selectedTask ? (
+        {!canReviewToc && !canImportToc && selectedTask ? (
           <p className="muted-note">
             当前任务不在 TOC_REVIEW 阶段，目录已锁定或尚未进入目录审阅阶段。
+          </p>
+        ) : null}
+        {canImportToc ? (
+          <p className="muted-note">
+            自动生成目录不正确时，可以直接粘贴完整目录树导入。系统会在必要时先完成需求解析，再生成新的 toc 版本。
           </p>
         ) : null}
 
@@ -1029,6 +1082,22 @@ export default function App() {
               </label>
               <button type="submit" disabled={loading || !canReviewToc || !selectedVersionNo}>
                 提交审阅意见并生成新版本
+              </button>
+            </form>
+
+            <form className="stack" onSubmit={handleImportToc}>
+              <label>
+                直接导入完整目录树
+                <textarea
+                  rows={12}
+                  value={outlineText}
+                  onChange={(e) => setOutlineText(e.target.value)}
+                  disabled={loading || !canImportToc}
+                  placeholder={"例如：\n一、售后服务总体方案\n1.1 售后服务目标\n1.1.1 保障系统安全稳定运行"}
+                />
+              </label>
+              <button type="submit" disabled={loading || !canImportToc}>
+                导入完整目录树并生成新版本
               </button>
             </form>
           </div>

@@ -153,6 +153,21 @@ class TaskService:
             review_config=review_config,
         )
 
+    def import_toc_outline(
+        self,
+        task_id: str,
+        outline_text: str,
+        *,
+        based_on_version_no: int | None = None,
+    ):
+        if not outline_text.strip():
+            raise ValueError("Outline text cannot be empty.")
+        return self.orchestrator.import_toc_outline(
+            task_id,
+            outline_text,
+            based_on_version_no=based_on_version_no,
+        )
+
     def confirm_toc(self, task_id: str, version_no: int) -> int:
         return self.orchestrator.confirm_toc(task_id, version_no)
 

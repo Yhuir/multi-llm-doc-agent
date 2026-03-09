@@ -109,6 +109,18 @@ export async function reviewToc(taskId, feedback, basedOnVersionNo = null) {
   });
 }
 
+export async function importTocOutline(taskId, outlineText, basedOnVersionNo = null) {
+  return request(`/tasks/${taskId}/toc/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      outline_text: outlineText,
+      based_on_version_no: basedOnVersionNo
+    }),
+    timeoutMs: 60000
+  });
+}
+
 export async function confirmToc(taskId, versionNo) {
   return request(`/tasks/${taskId}/toc/confirm`, {
     method: "POST",
