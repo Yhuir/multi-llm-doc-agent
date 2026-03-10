@@ -86,9 +86,21 @@ class WordExportAgent:
 class _DocumentWriter:
     """Append content to a docx while preserving template styles."""
 
-    IMAGE_WIDTH_RATIO = 0.96
-    IMAGE_HEIGHT_RATIO = 0.72
-    IMAGE_CANVAS_SCALE = 0.9
+    DEFAULT_IMAGE_ASPECT_RATIO = "3:2"
+    IMAGE_ASPECT_RATIO_VALUES = {
+        "2:1": 2.0,
+        "3:2": 1.5,
+    }
+    STYLE_ALIASES = {
+        "标题 1": ("Heading 1",),
+        "标题 2": ("Heading 2",),
+        "标题 3": ("Heading 3",),
+        "标题 4": ("Heading 4",),
+        "Heading 1": ("标题 1",),
+        "Heading 2": ("标题 2",),
+        "Heading 3": ("标题 3",),
+        "Heading 4": ("标题 4",),
+    }
 
     def __init__(self, document: DocumentObject) -> None:
         self.document = document
@@ -102,12 +114,14 @@ class _DocumentWriter:
     ) -> None:
         paragraph = self._next_paragraph()
         paragraph.text = text
-        paragraph.style = self._resolve_style(
+        resolved_style = self._resolve_style(
             style_name=style_name,
             fallback="Normal",
             warnings=warnings,
         )
-        _disable_list_numbering(paragraph)
+        paragraph.style = resolved_style
+        if not self._is_heading_style(resolved_style):
+            _disable_list_numbering(paragraph)
         paragraph.paragraph_format.keep_with_next = True
 
     def add_section_heading(
@@ -190,11 +204,13 @@ class _DocumentWriter:
             warnings.append(f"Image file missing: {image_path}")
             return
 
+        aspect_ratio = self._normalize_image_aspect_ratio(block.get("aspect_ratio"))
         render_path, cleanup_path = self._prepare_image_for_layout(
             image_path=image_path,
+            aspect_ratio=aspect_ratio,
             warnings=warnings,
         )
-        width, height = self._fit_image_size(image_path=render_path, warnings=warnings)
+        width, height = self._fit_image_size(aspect_ratio=aspect_ratio)
         paragraph = self._next_paragraph()
         paragraph.style = self._resolve_style(
             style_name="Normal",
@@ -228,79 +244,81 @@ class _DocumentWriter:
         style_names = {style.name for style in self.document.styles}
         if style_name in style_names:
             return style_name
-        if style_name.startswith("Heading "):
-            try:
-                level = int(style_name.split()[-1])
-            except ValueError:
-                level = 1
+
+        for alias in self.STYLE_ALIASES.get(style_name, ()):
+            if alias in style_names:
+                warnings.append(
+                    f"Style {style_name} missing in template; fallback to {alias}."
+                )
+                return alias
+
+        level = self._heading_level(style_name)
+        if level is not None:
             while level >= 1:
-                candidate = f"Heading {level}"
-                if candidate in style_names:
-                    warnings.append(
-                        f"Style {style_name} missing in template; fallback to {candidate}."
-                    )
-                    return candidate
+                for candidate in (f"标题 {level}", f"Heading {level}"):
+                    if candidate in style_names:
+                        warnings.append(
+                            f"Style {style_name} missing in template; fallback to {candidate}."
+                        )
+                        return candidate
                 level -= 1
+
         if fallback in style_names:
             warnings.append(f"Style {style_name} missing in template; fallback to {fallback}.")
             return fallback
         warnings.append(f"Style {style_name} missing and no fallback found; document default used.")
         return None
 
-    def _fit_image_size(self, *, image_path: Path, warnings: list[str]) -> tuple[Emu, Emu]:
+    def _fit_image_size(self, *, aspect_ratio: str) -> tuple[Emu, Emu]:
         section = self.document.sections[-1]
         available_width = int(section.page_width - section.left_margin - section.right_margin)
         available_height = int(section.page_height - section.top_margin - section.bottom_margin)
-
-        try:
-            with Image.open(image_path) as image:
-                pixel_width, pixel_height = image.size
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Failed to inspect image size for {image_path}: {exc}")
-            fallback_side = min(
-                int(available_width * self.IMAGE_WIDTH_RATIO),
-                int(available_height * self.IMAGE_HEIGHT_RATIO),
-            )
-            return Emu(fallback_side), Emu(fallback_side)
-
-        aspect_ratio = pixel_width / max(pixel_height, 1)
-        max_width = max(
-            int(available_width * self.IMAGE_WIDTH_RATIO),
-            int(available_width * 0.75),
-        )
-        max_height = max(
-            int(available_height * self.IMAGE_HEIGHT_RATIO),
-            int(available_height * 0.4),
-        )
-        target_width = max_width
-        target_height = int(target_width / max(aspect_ratio, 0.01))
-        if target_height > max_height:
-            target_height = max_height
-            target_width = int(target_height * aspect_ratio)
-
+        aspect_ratio_value = self.IMAGE_ASPECT_RATIO_VALUES[
+            self._normalize_image_aspect_ratio(aspect_ratio)
+        ]
+        target_width = available_width
+        target_height = int(target_width / aspect_ratio_value)
+        if target_height > available_height:
+            target_height = available_height
+            target_width = int(target_height * aspect_ratio_value)
         return Emu(target_width), Emu(target_height)
 
     def _prepare_image_for_layout(
         self,
         *,
         image_path: Path,
+        aspect_ratio: str,
         warnings: list[str],
     ) -> tuple[Path, Path | None]:
         try:
             with Image.open(image_path) as source:
                 source_rgb = source.convert("RGB")
-                side = max(source_rgb.width, source_rgb.height)
-                canvas = Image.new("RGB", (side, side), (255, 255, 255))
-                max_inner = int(side * self.IMAGE_CANVAS_SCALE)
-                resized = source_rgb.copy()
-                resized.thumbnail((max_inner, max_inner))
+                target_ratio = self.IMAGE_ASPECT_RATIO_VALUES[
+                    self._normalize_image_aspect_ratio(aspect_ratio)
+                ]
+                source_ratio = source_rgb.width / max(source_rgb.height, 1)
+                if abs(source_ratio - target_ratio) < 0.01:
+                    return image_path, None
+                if source_ratio > target_ratio:
+                    canvas_width = source_rgb.width
+                    canvas_height = max(
+                        source_rgb.height,
+                        int(round(source_rgb.width / target_ratio)),
+                    )
+                else:
+                    canvas_height = source_rgb.height
+                    canvas_width = max(
+                        source_rgb.width,
+                        int(round(source_rgb.height * target_ratio)),
+                    )
+                canvas = Image.new("RGB", (canvas_width, canvas_height), (255, 255, 255))
                 offset = (
-                    (side - resized.width) // 2,
-                    (side - resized.height) // 2,
+                    (canvas_width - source_rgb.width) // 2,
+                    (canvas_height - source_rgb.height) // 2,
                 )
-                canvas.paste(resized, offset)
+                canvas.paste(source_rgb, offset)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(f"Failed to square image for {image_path}: {exc}")
+            warnings.append(f"Failed to normalize image canvas for {image_path}: {exc}")
             return image_path, None
 
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -318,14 +336,35 @@ class _DocumentWriter:
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.space_after = Pt(0)
 
+    @staticmethod
+    def _heading_level(style_name: str | None) -> int | None:
+        if not style_name:
+            return None
+        normalized = style_name.strip()
+        for prefix in ("标题 ", "Heading "):
+            if normalized.startswith(prefix):
+                suffix = normalized[len(prefix) :].strip()
+                if suffix.isdigit():
+                    return int(suffix)
+        return None
+
+    @classmethod
+    def _is_heading_style(cls, style_name: str | None) -> bool:
+        return cls._heading_level(style_name) is not None
+
+    @classmethod
+    def _normalize_image_aspect_ratio(cls, aspect_ratio: Any) -> str:
+        normalized = str(aspect_ratio or "").strip()
+        if normalized in cls.IMAGE_ASPECT_RATIO_VALUES:
+            return normalized
+        return cls.DEFAULT_IMAGE_ASPECT_RATIO
+
 
 def _remove_initial_empty_paragraph(document: DocumentObject) -> None:
     if len(document.paragraphs) != 1:
         return
     paragraph = document.paragraphs[0]
     if paragraph.text.strip():
-        return
-    if paragraph.style and paragraph.style.name != "Normal":
         return
     element = paragraph._element
     parent = element.getparent()
@@ -342,10 +381,10 @@ def _disable_list_numbering(paragraph) -> None:
 
 def _normalize_docx_numbering(docx_path: Path) -> list[str]:
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    heading_levels = {
-        "一级标题": 0,
-        "二级标题": 1,
-        "三级标题": 2,
+    heading_style_names = {
+        f"heading {level}" for level in range(1, 5)
+    } | {
+        f"标题 {level}" for level in range(1, 5)
     }
     warnings: list[str] = []
 
@@ -363,20 +402,21 @@ def _normalize_docx_numbering(docx_path: Path) -> list[str]:
 
     heading_style_ids: set[str] = set()
     normal_style_id: str | None = None
-    for style_name, _level in heading_levels.items():
-        style_nodes = styles_root.xpath(
-            f"//w:style[w:name[@w:val='{style_name}']]",
-            namespaces=namespace,
-        )
-        if not style_nodes:
-            warnings.append(f"Heading style {style_name} missing in template styles.xml.")
+    for style_node in styles_root.xpath("//w:style[@w:type='paragraph']", namespaces=namespace):
+        name_nodes = style_node.xpath("./w:name", namespaces=namespace)
+        if not name_nodes:
             continue
-        style_node = style_nodes[0]
+        style_name = str(name_nodes[0].get(qn("w:val")) or "").strip().lower()
+        if style_name not in heading_style_names:
+            continue
         style_id = style_node.get(qn("w:styleId"))
         if not style_id:
             warnings.append(f"Heading style {style_name} missing styleId.")
             continue
         heading_style_ids.add(style_id)
+
+    if not heading_style_ids:
+        warnings.append("Heading styles 1-4 missing in template styles.xml.")
 
     normal_style_nodes = styles_root.xpath(
         "//w:style[w:name[@w:val='Normal']]",

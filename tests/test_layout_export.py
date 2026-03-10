@@ -93,6 +93,8 @@ class LayoutExportTestCase(unittest.TestCase):
                             "type": "process",
                             "file": "images/img_001.png",
                             "caption": "图001 循环水泵示意",
+                            "style_preset": "engineering_simulation_detail",
+                            "aspect_ratio": "2:1",
                             "group_caption": None,
                             "bind_anchor": "anchor_impl",
                             "bind_section": "实施步骤",
@@ -110,8 +112,8 @@ class LayoutExportTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_root)
 
-    def test_layout_and_export_generate_docx(self) -> None:
-        toc_document = TOCDocument(
+    def _build_toc_document(self) -> TOCDocument:
+        return TOCDocument(
             version=1,
             tree=[
                 TOCNode(
@@ -160,6 +162,9 @@ class LayoutExportTestCase(unittest.TestCase):
             ],
         )
 
+    def test_layout_and_export_generate_docx(self) -> None:
+        toc_document = self._build_toc_document()
+
         layout_agent = LayoutAgent()
         payload = layout_agent.build(
             task_id=self.task_id,
@@ -188,11 +193,11 @@ class LayoutExportTestCase(unittest.TestCase):
         self.assertEqual(len(doc.tables), 1)
         self.assertEqual(len(doc.inline_shapes), 1)
         self.assertEqual(doc.paragraphs[0].text, "施工组织与实施方案")
-        self.assertEqual(doc.paragraphs[0].style.name, "一级标题")
+        self.assertEqual(doc.paragraphs[0].style.name, "Heading 1")
         self.assertEqual(doc.paragraphs[1].text, "设备安装方案")
-        self.assertEqual(doc.paragraphs[1].style.name, "二级标题")
+        self.assertEqual(doc.paragraphs[1].style.name, "Heading 2")
         self.assertEqual(doc.paragraphs[2].text, "循环水泵配置方案")
-        self.assertEqual(doc.paragraphs[2].style.name, "三级标题")
+        self.assertEqual(doc.paragraphs[2].style.name, "Heading 3")
         self.assertEqual(doc.paragraphs[3].text, "实施步骤")
         self.assertEqual(doc.paragraphs[3].style.name, "Normal")
         self.assertEqual(doc.paragraphs[3].paragraph_format.line_spacing, 1.5)
@@ -207,26 +212,46 @@ class LayoutExportTestCase(unittest.TestCase):
         self.assertEqual(doc.paragraphs[4].paragraph_format.line_spacing, 1.5)
         self.assertEqual(doc.tables[0].style.name, "BiddingTable")
         self.assertTrue(all("图001" not in para.text for para in doc.paragraphs))
-        self.assertNotIn("<w:numPr>", doc.paragraphs[0]._p.xml)
-        self.assertNotIn("<w:numPr>", doc.paragraphs[1]._p.xml)
-        self.assertNotIn("<w:numPr>", doc.paragraphs[2]._p.xml)
         self.assertNotIn("<w:numPr>", doc.paragraphs[3]._p.xml)
         self.assertNotIn("<w:numPr>", doc.paragraphs[4]._p.xml)
         image_paragraph = next((para for para in doc.paragraphs if not para.text.strip()), None)
         self.assertIsNotNone(image_paragraph)
         self.assertNotIn("<w:numPr>", image_paragraph._p.xml)
-        with ZipFile(output_path, "r") as output_zip:
-            document_xml = output_zip.read("word/document.xml").decode("utf-8")
-        self.assertNotIn('w:numId w:val="0"', document_xml)
-        self.assertNotIn('w:numId w:val="50"', document_xml)
+        section = doc.sections[-1]
+        available_width = int(section.page_width - section.left_margin - section.right_margin)
         image_width = int(doc.inline_shapes[0].width)
         image_height = int(doc.inline_shapes[0].height)
-        self.assertGreater(image_width, 4_000_000)
-        self.assertGreater(image_height, 4_000_000)
-        self.assertLess(abs(image_width - image_height), 350_000)
+        self.assertGreaterEqual(image_width, int(available_width * 0.99))
+        self.assertLessEqual(image_width, available_width)
+        self.assertAlmostEqual(image_width / image_height, 2.0, delta=0.03)
         self.assertEqual(doc.tables[0].cell(0, 0).vertical_alignment, WD_CELL_VERTICAL_ALIGNMENT.CENTER)
         self.assertEqual(doc.tables[0].cell(0, 0).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
         self.assertEqual(doc.tables[0].cell(1, 1).paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+    def test_layout_and_export_generate_docx_without_images(self) -> None:
+        layout_agent = LayoutAgent()
+        payload = layout_agent.build(
+            task_id=self.task_id,
+            artifacts_root=self.artifacts_root,
+            toc_document=self._build_toc_document(),
+            include_images=False,
+        )
+        layout_path = self.artifacts_root / self.task_id / "final" / "layout_blocks.json"
+        layout_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        export_agent = WordExportAgent()
+        output_path = self.artifacts_root / self.task_id / "final" / "output_no_images.docx"
+        export_agent.export(
+            template_path=Path("templates/standard_template.docx"),
+            layout_blocks_path=layout_path,
+            output_path=output_path,
+        )
+
+        doc = Document(output_path)
+        self.assertEqual(len(doc.inline_shapes), 0)
 
 
 if __name__ == "__main__":

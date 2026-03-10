@@ -1,4 +1,4 @@
-"""Mock image generation agent for V1."""
+"""Image generation agent with provider-specific API integrations."""
 
 from __future__ import annotations
 
@@ -21,8 +21,24 @@ except Exception:  # noqa: BLE001
 
 
 class ImageGenerationAgent:
-    """Generate deterministic placeholder PNG files for prompts."""
+    """Generate images via configured provider or deterministic placeholders."""
 
+    DEFAULT_ASPECT_RATIO = "3:2"
+    ASPECT_RATIO_VALUES = {
+        "2:1": 2.0,
+        "3:2": 1.5,
+    }
+    MINIMAX_ASPECT_RATIO_MAP = {
+        "2:1": "16:9",
+        "3:2": "3:2",
+    }
+    PLACEHOLDER_WIDTH = 1440
+    MINIMAX_ENDPOINT = "https://api.minimaxi.com/v1/image_generation"
+    MINIMAX_MODEL_MAP = {
+        "MiniMax-M2.5": "image-01",
+        "image-01": "image-01",
+        "image-01-live": "image-01-live",
+    }
     DOUBAO_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
     DOUBAO_MODEL_ORDER = [
         "Doubao-Seedream-5.0-lite",
@@ -62,6 +78,12 @@ class ImageGenerationAgent:
                 prompt_item=prompt_item,
                 provider_config=provider_config or {},
             )
+        elif self._use_minimax(provider_config):
+            absolute_path = self._generate_via_minimax(
+                output_stem=absolute_stem,
+                prompt_item=prompt_item,
+                provider_config=provider_config or {},
+            )
         else:
             absolute_path = absolute_stem.with_suffix(".png")
             self._write_placeholder_png(
@@ -75,6 +97,9 @@ class ImageGenerationAgent:
             type=prompt_item.image_type,
             file=str(relative_path),
             caption=self._build_caption(prompt_item, image_id),
+            style_preset=prompt_item.style_preset,
+            style_variant=prompt_item.style_variant,
+            aspect_ratio=self._normalize_aspect_ratio(prompt_item.aspect_ratio),
             group_caption=None,
             prompt_id=prompt_item.prompt_id,
             must_have_elements=list(prompt_item.must_have_elements),
@@ -82,6 +107,37 @@ class ImageGenerationAgent:
             bind_section=prompt_item.bind_section,
             retry_count=retry_count,
         )
+
+    def _generate_via_minimax(
+        self,
+        *,
+        output_stem: Path,
+        prompt_item: ImagePromptItem,
+        provider_config: dict[str, Any],
+    ) -> Path:
+        api_key = str(provider_config.get("image_api_key") or "").strip()
+        if not api_key:
+            raise RuntimeError("MiniMax image provider selected but image_api_key is empty.")
+
+        selected_model = str(provider_config.get("image_model_name") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
+        model_name = self._resolve_minimax_model(selected_model)
+        payload = {
+            "model": model_name,
+            "prompt": prompt_item.prompt,
+            "aspect_ratio": self._provider_aspect_ratio(
+                prompt_item.aspect_ratio,
+                provider="minimax",
+            ),
+            "response_format": "url",
+            "n": 1,
+            "prompt_optimizer": True,
+        }
+        image_url = self._request_minimax_image_url(api_key=api_key, payload=payload)
+        provider_config["_resolved_image_model_name"] = selected_model
+        provider_config["_resolved_image_model_id"] = model_name
+        provider_config["_image_model_attempts"] = [selected_model]
+        provider_config.pop("_image_model_fallback_from", None)
+        return self._download_image_url(image_url=image_url, output_stem=output_stem)
 
     def _generate_via_doubao(
         self,
@@ -132,6 +188,13 @@ class ImageGenerationAgent:
         )
 
     @classmethod
+    def _resolve_minimax_model(cls, model_name: str) -> str:
+        normalized = model_name.strip()
+        if normalized in cls.MINIMAX_MODEL_MAP:
+            return cls.MINIMAX_MODEL_MAP[normalized]
+        return cls.MINIMAX_MODEL_MAP["MiniMax-M2.5"]
+
+    @classmethod
     def _resolve_doubao_model(cls, model_name: str) -> str:
         normalized = model_name.strip()
         if normalized in cls.DOUBAO_MODEL_MAP:
@@ -159,6 +222,68 @@ class ImageGenerationAgent:
             return False
         provider = str(provider_config.get("image_provider") or "").strip().lower()
         return provider == "doubao"
+
+    @staticmethod
+    def _use_minimax(provider_config: dict[str, Any] | None) -> bool:
+        if not provider_config:
+            return False
+        provider = str(provider_config.get("image_provider") or "").strip().lower()
+        api_key = str(provider_config.get("image_api_key") or "").strip()
+        return provider == "minimax" and bool(api_key)
+
+    @classmethod
+    def _normalize_aspect_ratio(cls, aspect_ratio: str | None) -> str:
+        normalized = str(aspect_ratio or "").strip()
+        if normalized in cls.ASPECT_RATIO_VALUES:
+            return normalized
+        return cls.DEFAULT_ASPECT_RATIO
+
+    @classmethod
+    def _provider_aspect_ratio(cls, aspect_ratio: str | None, *, provider: str) -> str:
+        normalized = cls._normalize_aspect_ratio(aspect_ratio)
+        if provider == "minimax":
+            return cls.MINIMAX_ASPECT_RATIO_MAP.get(
+                normalized,
+                cls.MINIMAX_ASPECT_RATIO_MAP[cls.DEFAULT_ASPECT_RATIO],
+            )
+        return normalized
+
+    def _request_minimax_image_url(self, *, api_key: str, payload: dict[str, Any]) -> str:
+        request = urllib_request.Request(
+            self.MINIMAX_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=90) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(
+                f"MiniMax image API HTTP {exc.code}: {detail[:400]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"MiniMax image API request failed: {exc.reason}") from exc
+
+        base_resp = response_payload.get("base_resp") or {}
+        if base_resp.get("status_code") not in (None, 0):
+            raise RuntimeError(
+                "MiniMax image API returned failure: "
+                f"{base_resp.get('status_code')} {base_resp.get('status_msg') or ''}".strip()
+            )
+
+        data = response_payload.get("data") or {}
+        image_urls = data.get("image_urls") or []
+        if not image_urls or not isinstance(image_urls, list):
+            raise RuntimeError(f"MiniMax image API returned no image urls: {response_payload}")
+        image_url = str(image_urls[0] or "").strip()
+        if not image_url:
+            raise RuntimeError(f"MiniMax image API returned empty image url: {response_payload}")
+        return image_url
 
     def _request_doubao_image_url(self, *, api_key: str, payload: dict[str, Any]) -> str:
         request = urllib_request.Request(
@@ -248,8 +373,10 @@ class ImageGenerationAgent:
             return
 
         color = self._color_from_seed(color_seed)
-        width = 768
-        height = 768
+        width, height = self._placeholder_dimensions(
+            prompt_item.aspect_ratio,
+            width=960,
+        )
         pixel = bytes(color)
         rows = []
         for row_index in range(height):
@@ -280,47 +407,104 @@ class ImageGenerationAgent:
         color_seed: str,
     ) -> None:
         color = self._color_from_seed(color_seed)
-        canvas = Image.new("RGB", (1280, 1280), (248, 249, 251))
+        canvas_width, canvas_height = self._placeholder_dimensions(
+            prompt_item.aspect_ratio,
+            width=self.PLACEHOLDER_WIDTH,
+        )
+        canvas = Image.new(
+            "RGB",
+            (canvas_width, canvas_height),
+            (248, 249, 251),
+        )
         draw = ImageDraw.Draw(canvas)
 
         accent = color
         border = tuple(max(channel - 40, 0) for channel in color)
         title_bar = (accent[0], accent[1], min(accent[2] + 20, 255))
 
-        draw.rounded_rectangle((40, 36, 1240, 1240), radius=24, outline=border, width=4, fill=(255, 255, 255))
-        draw.rounded_rectangle((60, 56, 1220, 176), radius=18, fill=title_bar)
-        draw.text((84, 74), self._safe_ascii(prompt_item.bind_section, "Engineering Diagram"), fill=(255, 255, 255))
-        draw.text((84, 104), f"Type: {self._safe_ascii(prompt_item.image_type, 'process')}", fill=(245, 245, 245))
+        margin_x = int(canvas_width * 0.03)
+        margin_y = int(canvas_height * 0.04)
+        title_left = margin_x + int(canvas_width * 0.015)
+        title_top = margin_y + int(canvas_height * 0.02)
+        title_right = canvas_width - title_left
+        title_bottom = title_top + int(canvas_height * 0.10)
+        draw.rounded_rectangle(
+            (margin_x, margin_y, canvas_width - margin_x, canvas_height - margin_y),
+            radius=24,
+            outline=border,
+            width=4,
+            fill=(255, 255, 255),
+        )
+        draw.rounded_rectangle((title_left, title_top, title_right, title_bottom), radius=18, fill=title_bar)
+        draw.text(
+            (title_left + 24, title_top + 18),
+            self._safe_ascii(prompt_item.bind_section, "Engineering Diagram"),
+            fill=(255, 255, 255),
+        )
+        draw.text(
+            (title_left + 24, title_top + 48),
+            f"Type: {self._safe_ascii(prompt_item.image_type, 'process')}",
+            fill=(245, 245, 245),
+        )
 
-        box_specs = [
-            (110, 330, 360, 610),
-            (470, 330, 810, 610),
-            (920, 330, 1170, 610),
-        ]
+        content_left = margin_x + int(canvas_width * 0.05)
+        content_right = canvas_width - content_left
+        box_gap = int(canvas_width * 0.05)
+        box_top = int(canvas_height * 0.28)
+        box_bottom = int(canvas_height * 0.58)
+        box_width = int((content_right - content_left - box_gap * 2) / 3)
+        box_specs = []
+        current_left = content_left
+        for _ in range(3):
+            box_specs.append((current_left, box_top, current_left + box_width, box_bottom))
+            current_left += box_width + box_gap
+
         labels = self._placeholder_labels(prompt_item)
         for idx, box in enumerate(box_specs):
             draw.rounded_rectangle(box, radius=20, outline=accent, width=4, fill=(247, 250, 253))
             draw.text((box[0] + 24, box[1] + 24), labels[idx], fill=(38, 57, 77))
             draw.text((box[0] + 24, box[1] + 72), f"Element: {labels[idx]}", fill=(83, 101, 122))
 
-        draw.line((360, 470, 470, 470), fill=accent, width=6)
-        draw.line((810, 470, 920, 470), fill=accent, width=6)
-        draw.polygon([(455, 458), (470, 470), (455, 482)], fill=accent)
-        draw.polygon([(905, 458), (920, 470), (905, 482)], fill=accent)
+        arrow_y = int((box_top + box_bottom) / 2)
+        for left_box, right_box in zip(box_specs, box_specs[1:]):
+            line_start = left_box[2]
+            line_end = right_box[0]
+            draw.line((line_start, arrow_y, line_end, arrow_y), fill=accent, width=6)
+            draw.polygon(
+                [
+                    (line_end - 15, arrow_y - 12),
+                    (line_end, arrow_y),
+                    (line_end - 15, arrow_y + 12),
+                ],
+                fill=accent,
+            )
 
         must_have_text = " / ".join(
             self._safe_ascii(item, f"Item {idx}")
             for idx, item in enumerate(prompt_item.must_have_elements[:3], start=1)
         ) or "Item 1 / Item 2 / Item 3"
-        draw.text((84, 780), f"Must-have: {must_have_text}", fill=(48, 70, 92))
+        draw.text(
+            (title_left + 24, int(canvas_height * 0.72)),
+            f"Must-have: {must_have_text}",
+            fill=(48, 70, 92),
+        )
         if prompt_item.forbidden_elements:
             forbidden_text = " / ".join(
                 self._safe_ascii(item, f"Forbidden {idx}")
                 for idx, item in enumerate(prompt_item.forbidden_elements[:2], start=1)
             )
-            draw.text((84, 840), f"Forbidden: {forbidden_text}", fill=(120, 78, 78))
+            draw.text(
+                (title_left + 24, int(canvas_height * 0.79)),
+                f"Forbidden: {forbidden_text}",
+                fill=(120, 78, 78),
+            )
 
         canvas.save(path, format="PNG")
+
+    @classmethod
+    def _placeholder_dimensions(cls, aspect_ratio: str | None, *, width: int) -> tuple[int, int]:
+        ratio_value = cls.ASPECT_RATIO_VALUES[cls._normalize_aspect_ratio(aspect_ratio)]
+        return width, int(round(width / ratio_value))
 
     @staticmethod
     def _placeholder_labels(prompt_item: ImagePromptItem) -> list[str]:
