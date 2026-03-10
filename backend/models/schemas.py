@@ -300,6 +300,9 @@ class ImagePromptItem(StrictBaseModel):
     prompt_id: str
     image_type: str
     prompt: str
+    style_preset: str | None = None
+    style_variant: str | None = None
+    aspect_ratio: str = "3:2"
     must_have_elements: list[str] = Field(default_factory=list)
     forbidden_elements: list[str] = Field(default_factory=list)
     bind_anchor: str | None = None
@@ -316,6 +319,9 @@ class ImageItem(StrictBaseModel):
     type: str
     file: str
     caption: str
+    style_preset: str | None = None
+    style_variant: str | None = None
+    aspect_ratio: str = "3:2"
     group_caption: str | None = None
     prompt_id: str | None = None
     must_have_elements: list[str] = Field(default_factory=list)

@@ -326,10 +326,12 @@ class NodeRunner:
         self.task_repository.touch_heartbeat(task_id, stage="LAYOUTING", node_uid=None)
 
         toc_document = self._load_confirmed_toc(task_id)
+        image_config = self._image_provider_config(task_id)
         payload = self.layout_agent.build(
             task_id=task_id,
             artifacts_root=self.artifacts_root,
             toc_document=toc_document,
+            include_images=not self._image_generation_disabled(image_config),
         )
         layout_path = self.artifacts_root / task_id / "final" / "layout_blocks.json"
         self._write_json(layout_path, payload)
@@ -1031,11 +1033,42 @@ class NodeRunner:
         if fact_check is None or fact_check.result != AgentResult.PASS:
             raise RuntimeError("fact_check.json missing or failed before image generation")
 
+        provider_config = self._image_provider_config(node.task_id)
+        if self._image_generation_disabled(provider_config):
+            entities = EntityExtraction(node_uid=node.node_uid, entities=[])
+            prompts = ImagePrompts(node_uid=node.node_uid, prompts=[])
+            images = ImagesArtifact(node_uid=node.node_uid, images=[])
+            self._write_json(
+                node_dir / "entities.json",
+                entities.model_dump(mode="json"),
+            )
+            self._write_json(
+                node_dir / "image_prompts.json",
+                prompts.model_dump(mode="json"),
+            )
+            path = node_dir / "images.json"
+            self._write_json(path, images.model_dump(mode="json"))
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="IMAGE_PROVIDER",
+                status=EventStatus.INFO,
+                message="Image generation disabled by system config; wrote empty image artifacts.",
+                output_artifact_path=str(path),
+                meta_json={
+                    "provider": provider_config.get("image_provider") or "disabled",
+                    "model": provider_config.get("image_model_name") or "关闭图像生成",
+                    "disabled": True,
+                },
+            )
+            node.image_manual_required = False
+            node.manual_action_status = ManualActionStatus.NONE
+            return path
+
         node_text = self._load_node_text(node_dir)
         entities = self.entity_extractor.extract(node_text=node_text, fact_check=fact_check)
         prompts = self.image_prompt.build(entities=entities, node_text=node_text)
         images = ImagesArtifact(node_uid=node.node_uid, images=[])
-        provider_config = self._image_provider_config(node.task_id)
 
         for prompt in prompts.prompts:
             generated = self.image_generation.generate(
@@ -1262,9 +1295,21 @@ class NodeRunner:
         config = dict(self.system_config_getter() or {})
         task = self.task_repository.get(task_id)
         if task is not None:
-            config.setdefault("image_provider", task.image_provider)
+            if str(task.image_provider or "").strip().lower() == "disabled":
+                config["image_provider"] = "disabled"
+                config["image_model_name"] = "关闭图像生成"
+            else:
+                config.setdefault("image_provider", task.image_provider)
             config.setdefault("text_provider", task.text_provider)
         return config
+
+    @staticmethod
+    def _image_generation_disabled(provider_config: dict[str, Any] | None) -> bool:
+        if not provider_config:
+            return False
+        provider = str(provider_config.get("image_provider") or "").strip().lower()
+        model_name = str(provider_config.get("image_model_name") or "").strip()
+        return provider in {"disabled", "none", "off"} or model_name == "关闭图像生成"
 
     def _write_length_artifact(self, node: NodeState, node_dir: Path) -> Path:
         text_path = node_dir / "text.json"

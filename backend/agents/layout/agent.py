@@ -27,6 +27,7 @@ class LayoutAgent:
         task_id: str,
         artifacts_root: Path,
         toc_document: TOCDocument,
+        include_images: bool = True,
     ) -> dict[str, Any]:
         warnings: list[str] = []
         blocks: list[dict[str, Any]] = []
@@ -40,6 +41,7 @@ class LayoutAgent:
                 artifacts_root=artifacts_root,
                 toc_node=toc_node,
                 base_level=base_level,
+                include_images=include_images,
                 blocks=blocks,
                 warnings=warnings,
             )
@@ -58,6 +60,7 @@ class LayoutAgent:
         artifacts_root: Path,
         toc_node: TOCNode,
         base_level: int,
+        include_images: bool,
         blocks: list[dict[str, Any]],
         warnings: list[str],
     ) -> None:
@@ -77,6 +80,7 @@ class LayoutAgent:
                 artifacts_root=artifacts_root,
                 toc_node=toc_node,
                 visible_level=visible_level,
+                include_images=include_images,
                 blocks=blocks,
                 warnings=warnings,
             )
@@ -87,6 +91,7 @@ class LayoutAgent:
                 artifacts_root=artifacts_root,
                 toc_node=child,
                 base_level=base_level,
+                include_images=include_images,
                 blocks=blocks,
                 warnings=warnings,
             )
@@ -98,6 +103,7 @@ class LayoutAgent:
         artifacts_root: Path,
         toc_node: TOCNode,
         visible_level: int,
+        include_images: bool,
         blocks: list[dict[str, Any]],
         warnings: list[str],
     ) -> None:
@@ -115,7 +121,7 @@ class LayoutAgent:
             node_uid=toc_node.node_uid,
             warnings=warnings,
         )
-        images = self._load_images(node_dir)
+        images = self._load_images(node_dir, include_images=include_images)
         pending_tables = list(tables)
         pending_images = list(images.images)
 
@@ -204,7 +210,9 @@ class LayoutAgent:
             return TablesArtifact(node_uid=node_dir.name, tables=[])
         return TablesArtifact.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
-    def _load_images(self, node_dir: Path) -> ImagesArtifact:
+    def _load_images(self, node_dir: Path, *, include_images: bool) -> ImagesArtifact:
+        if not include_images:
+            return ImagesArtifact(node_uid=node_dir.name, images=[])
         path = node_dir / "images.json"
         if not path.exists():
             return ImagesArtifact(node_uid=node_dir.name, images=[])
@@ -309,6 +317,8 @@ class LayoutAgent:
             "image_id": image.image_id,
             "path": str(image_path),
             "caption": image.caption,
+            "style_preset": getattr(image, "style_preset", None),
+            "aspect_ratio": getattr(image, "aspect_ratio", "3:2"),
             "group_caption": image.group_caption,
             "bind_anchor": image.bind_anchor,
             "bind_section": image.bind_section,
@@ -318,10 +328,10 @@ class LayoutAgent:
     def _heading_style_for_level(level: int) -> str:
         resolved = min(max(level, 1), 9)
         style_map = {
-            1: "一级标题",
-            2: "二级标题",
-            3: "三级标题",
-            4: "四级标题",
+            1: "标题 1",
+            2: "标题 2",
+            3: "标题 3",
+            4: "标题 4",
         }
         return style_map.get(resolved, f"Heading {resolved}")
 

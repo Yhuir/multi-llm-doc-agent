@@ -63,6 +63,9 @@ class SchemaValidationTestCase(unittest.TestCase):
                     "prompt_id": "prompt_01",
                     "image_type": "topology",
                     "prompt": "生成网络拓扑图",
+                    "style_preset": "engineering_flow_diagram",
+                    "style_variant": "hub_diagnosis_map",
+                    "aspect_ratio": "2:1",
                     "must_have_elements": ["交换机", "机柜"],
                     "forbidden_elements": ["人物"],
                     "bind_anchor": "anchor_1",
@@ -71,6 +74,9 @@ class SchemaValidationTestCase(unittest.TestCase):
             ],
         }
         prompts = ImagePrompts.model_validate(payload)
+        self.assertEqual(prompts.prompts[0].style_preset, "engineering_flow_diagram")
+        self.assertEqual(prompts.prompts[0].style_variant, "hub_diagnosis_map")
+        self.assertEqual(prompts.prompts[0].aspect_ratio, "2:1")
         self.assertEqual(prompts.prompts[0].must_have_elements, ["交换机", "机柜"])
         self.assertEqual(prompts.prompts[0].forbidden_elements, ["人物"])
 

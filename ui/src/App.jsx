@@ -27,6 +27,7 @@ const TEXT_MODEL_OPTIONS = [
 ];
 
 const IMAGE_MODEL_OPTIONS = [
+  { label: "关闭图像生成", modelName: "关闭图像生成", provider: "disabled" },
   { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" },
   { label: "Doubao-Seedream-5.0-lite", modelName: "Doubao-Seedream-5.0-lite", provider: "doubao" },
   { label: "Doubao-Seedream-4.5", modelName: "Doubao-Seedream-4.5", provider: "doubao" },
@@ -821,9 +822,13 @@ export default function App() {
                   type="password"
                   value={systemConfig.image_api_key}
                   onChange={(e) => handleSystemConfigChange("image_api_key", e.target.value)}
-                  placeholder="输入图片模型 API Key"
+                  placeholder={
+                    systemConfig.image_provider === "disabled"
+                      ? "已关闭图像生成，无需填写"
+                      : "输入图片模型 API Key"
+                  }
                   autoComplete="off"
-                  disabled={configSaving}
+                  disabled={configSaving || systemConfig.image_provider === "disabled"}
                 />
               </label>
             </div>
