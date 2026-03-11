@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from backend.agents.toc_generator import TOCGeneratorAgent
 from backend.agents.toc_review.agent import TOCReviewChatAgent
 from backend.app_service.task_service import TaskService
 from backend.models.schemas import TOCDocument, TOCNode
@@ -259,8 +260,115 @@ class TOCReviewAgentTestCase(unittest.TestCase):
         self.assertEqual(root_children[0].title, "第二章")
         section_titles = [item.title for item in root_children[0].children]
         self.assertEqual(section_titles, ["新建系统范围"])
-        leaf_titles = [item.title for item in root_children[0].children[0].children]
-        self.assertEqual(leaf_titles, ["空压机余热回收系统", "乏汽余热回收系统"])
+
+    def test_review_strips_clause_number_prefix_from_new_titles(self) -> None:
+        toc = TOCDocument(
+            version=1,
+            tree=[
+                TOCNode(
+                    node_uid="uid_root_001",
+                    node_id="1",
+                    level=1,
+                    title="工程实施方案",
+                    children=[
+                        TOCNode(
+                            node_uid="uid_l2_a",
+                            node_id="1.1",
+                            level=2,
+                            title="售后服务方案",
+                            children=[
+                                TOCNode(
+                                    node_uid="uid_l3_a1",
+                                    node_id="1.1.1",
+                                    level=3,
+                                    title="服务内容",
+                                    is_generation_unit=True,
+                                    constraints={"min_words": 1800},
+                                    children=[],
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+
+        planned_actions = [
+            {"type": "rename", "target": "服务内容", "new_title": "1.8.5 售后服务团队"}
+        ]
+        with patch.object(self.agent, "_plan_actions_with_model", return_value=planned_actions):
+            reviewed = self.agent.review(
+                toc_doc=toc,
+                feedback="请将服务内容改成售后服务团队",
+                review_config={
+                    "text_provider": "minimax",
+                    "text_model_name": "MiniMax-M2.5",
+                    "text_api_key": "fake-key",
+                },
+            )
+
+        self.assertEqual(reviewed.tree[0].children[0].children[0].title, "售后服务团队")
+
+    def test_review_expands_second_level_leaf_into_level3_generation_unit(self) -> None:
+        toc = TOCDocument(
+            version=1,
+            tree=[
+                TOCNode(
+                    node_uid="uid_root_001",
+                    node_id="1",
+                    level=1,
+                    title="工程实施方案",
+                    children=[
+                        TOCNode(
+                            node_uid="uid_l2_a",
+                            node_id="1.1",
+                            level=2,
+                            title="售后服务方案",
+                            is_generation_unit=False,
+                            children=[],
+                        ),
+                        TOCNode(
+                            node_uid="uid_l2_b",
+                            node_id="1.2",
+                            level=2,
+                            title="技术要求",
+                            children=[
+                                TOCNode(
+                                    node_uid="uid_l3_b1",
+                                    node_id="1.2.1",
+                                    level=3,
+                                    title="总体要求",
+                                    is_generation_unit=True,
+                                    constraints={"min_words": 1800},
+                                    children=[],
+                                )
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        planned_actions = [
+            {"type": "rename", "target": "技术要求", "new_title": "技术要求总述"}
+        ]
+        with patch.object(self.agent, "_plan_actions_with_model", return_value=planned_actions):
+            reviewed = self.agent.review(
+                toc_doc=toc,
+                feedback="请调整技术要求标题",
+                review_config={
+                    "text_provider": "minimax",
+                    "text_model_name": "MiniMax-M2.5",
+                    "text_api_key": "fake-key",
+                },
+            )
+
+        shallow_node = reviewed.tree[0].children[0]
+        self.assertFalse(shallow_node.is_generation_unit)
+        self.assertEqual(len(shallow_node.children), 1)
+        self.assertEqual(shallow_node.children[0].level, 3)
+        self.assertTrue(shallow_node.children[0].is_generation_unit)
+        self.assertEqual(shallow_node.children[0].title, "售后服务方案")
 
     def test_explicit_keep_only_feedback_skips_model_planning(self) -> None:
         toc = TOCDocument(
@@ -365,10 +473,39 @@ class TOCReviewAgentTestCase(unittest.TestCase):
 
 
 class TOCVersioningTestCase(unittest.TestCase):
+    _MODEL_TOC = """
+    {
+      "root_title": "视频监控系统实施方案",
+      "chapters": [
+        {
+          "title": "视频监控系统建设范围",
+          "children": [
+            {"title": "前端点位部署要求", "children": []},
+            {"title": "平台接入与联调要求", "children": []}
+          ]
+        },
+        {
+          "title": "施工与验收要求",
+          "children": [
+            {"title": "施工组织与质量控制", "children": []},
+            {"title": "验收资料与签认要求", "children": []}
+          ]
+        }
+      ]
+    }
+    """
+
     def setUp(self) -> None:
         self.temp_root = make_temp_root("toc_version_test_")
         self.settings = build_settings(self.temp_root)
         self.service = TaskService(settings=self.settings)
+        self.service.update_system_config(
+            {
+                "text_provider": "minimax",
+                "text_model_name": "MiniMax-M2.5",
+                "text_api_key": "fake-key",
+            }
+        )
 
     def tearDown(self) -> None:
         cleanup_temp_root(self.temp_root)
@@ -387,7 +524,9 @@ class TOCVersioningTestCase(unittest.TestCase):
         self.service.save_upload(task.task_id, "input.docx", sample_docx.read_bytes())
         self.service.parse_requirement(task.task_id)
 
-        v1 = self.service.generate_toc(task.task_id)
+        with patch.object(TOCGeneratorAgent, "_request_minimax_completion", return_value=self._MODEL_TOC):
+            v1 = self.service.generate_toc(task.task_id)
+        self.service.update_system_config({"text_api_key": ""})
         toc_v1 = TOCDocument.model_validate(self.service.get_toc_document(task.task_id, 1))
         target_title = toc_v1.tree[0].children[0].title
         renamed_title = f"{target_title}（修订版）"
@@ -422,7 +561,9 @@ class TOCVersioningTestCase(unittest.TestCase):
         )
         self.service.save_upload(task.task_id, "input_noop.docx", sample_docx.read_bytes())
         self.service.parse_requirement(task.task_id)
-        self.service.generate_toc(task.task_id)
+        with patch.object(TOCGeneratorAgent, "_request_minimax_completion", return_value=self._MODEL_TOC):
+            self.service.generate_toc(task.task_id)
+        self.service.update_system_config({"text_api_key": ""})
 
         with self.assertRaisesRegex(ValueError, "未根据审阅意见应用任何目录修改"):
             self.service.review_toc(task.task_id, "整体再优化一下")

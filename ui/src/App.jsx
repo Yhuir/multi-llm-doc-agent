@@ -190,6 +190,17 @@ function upsertTocVersion(versions, nextVersion) {
   return [nextVersion, ...filtered].sort((a, b) => b.version_no - a.version_no);
 }
 
+function CollapsedRail({ side, title, subtitle, onExpand }) {
+  return (
+    <div className={`sidebar-rail ${side}`}>
+      <button type="button" className="rail-trigger" onClick={onExpand}>
+        <span>{subtitle}</span>
+        <strong>{title}</strong>
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [systemConfig, setSystemConfig] = useState(DEFAULT_SYSTEM_CONFIG);
   const [tasks, setTasks] = useState([]);
@@ -211,11 +222,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
-  const [busySince, setBusySince] = useState(0);
+  const [busyScope, setBusyScope] = useState("");
+  const [, setBusySince] = useState(0);
   const [switchingVersionNo, setSwitchingVersionNo] = useState(0);
   const [apiHealthy, setApiHealthy] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [outlineModalOpen, setOutlineModalOpen] = useState(false);
 
   const selectedTask = useMemo(
     () => tasks.find((item) => item.task_id === selectedTaskId) || null,
@@ -238,7 +253,7 @@ export default function App() {
     );
   const tocNodeCount = useMemo(() => countTocNodes(visibleTocNodes), [visibleTocNodes]);
   const tocPreviewHeight = useMemo(
-    () => Math.min(820, Math.max(280, tocNodeCount * 34)),
+    () => Math.min(680, Math.max(360, tocNodeCount * 26)),
     [tocNodeCount]
   );
   const canBuildToc =
@@ -287,11 +302,21 @@ export default function App() {
     };
   }, [selectedTask, nodeStates, tasks]);
 
-  async function withAction(fn, successMessage = "", activityLabel = "处理中") {
+  function isBusyForScope(scopes) {
+    return Boolean(busyLabel) && scopes.includes(busyScope);
+  }
+
+  async function withAction(
+    fn,
+    successMessage = "",
+    activityLabel = "处理中",
+    activityScope = "global"
+  ) {
     setError("");
     setMessage("");
     setLoading(true);
     setBusyLabel(activityLabel);
+    setBusyScope(activityScope);
     setBusySince(Date.now());
     try {
       const result = await fn();
@@ -303,6 +328,7 @@ export default function App() {
     } finally {
       setLoading(false);
       setBusyLabel("");
+      setBusyScope("");
       setBusySince(0);
     }
   }
@@ -468,9 +494,29 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [selectedTaskId, loading, configSaving]);
 
+  useEffect(() => {
+    if (!outlineModalOpen) {
+      return undefined;
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setOutlineModalOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [outlineModalOpen]);
+
   async function handleCreateTask(event) {
     event.preventDefault();
-    const created = await withAction(() => createTask(newTaskTitle), "任务已创建", "正在创建任务");
+    const created = await withAction(
+      () => createTask(newTaskTitle),
+      "任务已创建",
+      "正在创建任务",
+      "task"
+    );
     if (!created) return;
     await loadTasks(created.task_id);
     await loadTaskContext(created.task_id);
@@ -506,7 +552,8 @@ export default function App() {
     const result = await withAction(
       () => uploadDocx(selectedTaskId, file),
       "上传成功",
-      "正在上传 .docx 文件"
+      "正在上传 .docx 文件",
+      "upload"
     );
     if (!result) return;
     await refreshCurrentTask();
@@ -533,7 +580,8 @@ export default function App() {
     const result = await withAction(
       () => generateToc(selectedTaskId),
       successMessage,
-      activityLabel
+      activityLabel,
+      "toc"
     );
     if (!result) return;
     await refreshCurrentTask(result.version_no);
@@ -568,7 +616,8 @@ export default function App() {
     const result = await withAction(
       () => reviewToc(selectedTaskId, feedback.trim(), selectedVersionNo),
       `已生成 toc_v${(tocVersions[0]?.version_no || 0) + 1}`,
-      "正在生成新的目录版本"
+      "正在生成新的目录版本",
+      "review"
     );
     if (!result) return;
 
@@ -613,11 +662,13 @@ export default function App() {
     const result = await withAction(
       () => importTocOutline(selectedTaskId, outlineText.trim(), selectedVersionNo || null),
       "完整目录树已导入",
-      "正在导入完整目录树"
+      "正在导入完整目录树",
+      "import"
     );
     if (!result) return;
 
     setOutlineText("");
+    setOutlineModalOpen(false);
 
     if (result.toc_document) {
       setSelectedVersionNo(result.version_no);
@@ -647,7 +698,8 @@ export default function App() {
     const result = await withAction(
       () => confirmAndStartGeneration(selectedTaskId, selectedVersionNo),
       "目录已确认并已提交后台生成任务",
-      "正在确认目录并开始生成内容"
+      "正在确认目录并开始生成内容",
+      "confirm"
     );
     if (!result) return;
 
@@ -691,10 +743,12 @@ export default function App() {
     setError("");
     setMessage("");
     setBusyLabel("正在检查后端服务");
+    setBusyScope("config");
     setBusySince(Date.now());
     const healthy = await checkApiHealth();
     if (!healthy) {
       setBusyLabel("");
+      setBusyScope("");
       setBusySince(0);
       setError("后端 API 不可用，请启动或重启 uvicorn backend.api.main:app");
       return;
@@ -702,6 +756,7 @@ export default function App() {
 
     setConfigSaving(true);
     setBusyLabel("正在保存系统配置");
+    setBusyScope("config");
     setBusySince(Date.now());
     try {
       const saved = await updateSystemConfig({
@@ -719,19 +774,40 @@ export default function App() {
     } finally {
       setConfigSaving(false);
       setBusyLabel("");
+      setBusyScope("");
       setBusySince(0);
     }
   }
 
   const diffSummary = selectedVersion?.diff_summary_json;
   const summary = diffSummary?.summary || {};
+  const parseReportHighlights = parseReport
+    ? [
+        { label: "段落数", value: parseReport.paragraph_count ?? "-" },
+        { label: "子系统", value: parseReport.subsystem_count ?? "-" },
+        { label: "缺失项", value: parseReport.missing_fields?.length ?? 0 },
+      ]
+    : [];
 
   return (
     <div className="page">
-      <header className="header">
-        <h1>Multi-Agent 文档生成系统</h1>
-        <p>当前页面覆盖系统配置、上传、解析、目录冻结、后台生成和最终 output.docx 下载。</p>
-        <p>API: {API_BASE}</p>
+      <header className="header workspace-header">
+        <div>
+          <p className="eyebrow">Engineering Document Studio</p>
+          <h1>Multi-Agent 文档生成系统</h1>
+          <p>左侧管理配置与日志，中间持续查看目录树和节点状态，右侧完成上传、指令输入和生成控制。</p>
+        </div>
+        <div className="header-badges">
+          <span className={`header-badge ${apiHealthy ? "healthy" : "offline"}`}>
+            {apiHealthy ? "API 在线" : "API 不可用"}
+          </span>
+          <span className="header-badge subtle">API: {API_BASE}</span>
+          {selectedTask ? (
+            <span className="header-badge subtle">
+              当前任务：{selectedTask.title} · {statusCn(selectedTask.status)}
+            </span>
+          ) : null}
+        </div>
       </header>
 
       {!apiHealthy ? (
@@ -740,405 +816,581 @@ export default function App() {
         </div>
       ) : null}
 
-      {(loading || configSaving) && busyLabel ? (
-        <div className="loading-overlay" role="status" aria-live="polite">
-          <div className="loading-box">
-            <div className="loading-spinner" />
-            <div>
-              <strong>{busyLabel}</strong>
-              <p>请等待当前动作完成。若长时间无响应，请检查 API 或 Worker 进程。</p>
-              {busySince ? (
-                <p className="muted-note">
-                  已持续 {Math.max(1, Math.floor((Date.now() - busySince) / 1000))} 秒
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {message ? <div className="banner success">{message}</div> : null}
       {error ? <div className="banner error">{error}</div> : null}
-
-      <section className="card config-card">
-        <details className="config-panel">
-          <summary className="config-summary">
-            <div>
-              <h2>系统配置区</h2>
-              <p>选择文本模型、图片模型及各自 API Key，保存到本地系统配置。</p>
-            </div>
-            <span className="summary-meta">
-              文本：{systemConfig.text_model_name} | 图片：{systemConfig.image_model_name}
-            </span>
-          </summary>
-
-          <form className="stack config-form" onSubmit={handleSaveSystemConfig}>
-            <div className="grid-2">
-              <label>
-                文本模型
-                <select
-                  value={systemConfig.text_model_name}
-                  onChange={(e) => handleSystemConfigChange("text_model_name", e.target.value)}
-                  disabled={configSaving}
-                >
-                  {TEXT_MODEL_OPTIONS.map((item) => (
-                    <option key={item.modelName} value={item.modelName}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                图片模型
-                <select
-                  value={systemConfig.image_model_name}
-                  onChange={(e) => handleSystemConfigChange("image_model_name", e.target.value)}
-                  disabled={configSaving}
-                >
-                  {IMAGE_MODEL_OPTIONS.map((item) => (
-                    <option key={item.modelName} value={item.modelName}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="full-width">
-                文本模型 API Key
-                <input
-                  type="password"
-                  value={systemConfig.text_api_key}
-                  onChange={(e) => handleSystemConfigChange("text_api_key", e.target.value)}
-                  placeholder="输入文本模型 API Key"
-                  autoComplete="off"
-                  disabled={configSaving}
-                />
-              </label>
-
-              <label className="full-width">
-                图片模型 API Key
-                <input
-                  type="password"
-                  value={systemConfig.image_api_key}
-                  onChange={(e) => handleSystemConfigChange("image_api_key", e.target.value)}
-                  placeholder={
-                    systemConfig.image_provider === "disabled"
-                      ? "已关闭图像生成，无需填写"
-                      : "输入图片模型 API Key"
-                  }
-                  autoComplete="off"
-                  disabled={configSaving || systemConfig.image_provider === "disabled"}
-                />
-              </label>
-            </div>
-
-            <div className="config-actions">
-              <span className="muted-note">保存后，新建任务会默认继承当前系统配置。</span>
-              <button type="submit" disabled={configSaving}>
-                {configSaving ? "保存中..." : "保存配置"}
-              </button>
-            </div>
-          </form>
-        </details>
-      </section>
-
-      <section className="card">
-        <h2>任务与上传</h2>
-        <div className="layout">
-          <form className="stack" onSubmit={handleCreateTask}>
-            <label>
-              新任务标题
-              <input
-                value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                placeholder="输入任务标题"
-              />
-            </label>
-            <button type="submit" disabled={loading}>
-              创建任务
-            </button>
-          </form>
-
-          <div className="stack">
-            <label>
-              选择任务
-              <select
-                value={selectedTaskId}
-                onChange={(e) => setSelectedTaskId(e.target.value)}
-                disabled={loading}
-              >
-                <option value="">请选择任务</option>
-                {tasks.map((task) => (
-                  <option key={task.task_id} value={task.task_id}>
-                    {task.task_id} | {task.title} | {statusCn(task.status)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <form className="stack" onSubmit={handleUpload}>
-              <label>
-                上传需求文档（仅 .docx）
-                <input
-                  type="file"
-                  accept=".docx"
-                  onChange={handleFileChange}
-                  disabled={loading || !selectedTaskId}
-                />
-              </label>
-              <button type="submit" disabled={loading || !selectedTaskId || !file}>
-                保存上传文件
-              </button>
-            </form>
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>阶段操作</h2>
-        <div className="actions">
-          <button
-            type="button"
-            onClick={handleGenerateToc}
-            disabled={loading || !canBuildToc}
-          >
-            {buildTocLabel}
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmAndStart}
-            disabled={loading || !canReviewToc || !selectedVersionNo}
-          >
-            2. 确认目录 / 开始生成内容
-          </button>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>当前任务状态</h2>
-        {selectedTask ? (
-          <>
-            {workerRuntimeHint ? (
-              <div className={`banner ${workerRuntimeHint.level}`}>
-                {workerRuntimeHint.text}
+      <div
+        className={`workspace-shell${leftCollapsed ? " left-collapsed" : ""}${rightCollapsed ? " right-collapsed" : ""}`}
+      >
+        <aside className={`side-panel left-panel ${leftCollapsed ? "collapsed" : ""}`}>
+          {leftCollapsed ? (
+            <CollapsedRail
+              side="left"
+              title="配置与日志"
+              subtitle="展开左侧"
+              onExpand={() => setLeftCollapsed(false)}
+            />
+          ) : (
+            <div className="panel-stack">
+              <div className="panel-topbar">
+                <div>
+                  <p className="eyebrow">Left Panel</p>
+                  <h2>系统配置与最近日志</h2>
+                </div>
+                <button type="button" className="ghost-btn" onClick={() => setLeftCollapsed(true)}>
+                  收起
+                </button>
               </div>
-            ) : null}
-            {nodeStates.some((node) => node.image_manual_required) ? (
-              <div className="banner warning">
-                存在图片需人工确认的节点。当前为宽松模式，任务仍可继续排版与导出；人工确认入口预留在节点状态区。
-              </div>
-            ) : null}
-            <div className="stats">
-              <div>任务ID：{selectedTask.task_id}</div>
-              <div>标题：{selectedTask.title}</div>
-              <div>状态：{statusCn(selectedTask.status)}</div>
-              <div>当前阶段：{selectedTask.current_stage || "-"}</div>
-              <div>当前节点：{selectedTask.current_node_uid || "-"}</div>
-              <div>确认目录版本：{selectedTask.confirmed_toc_version || "-"}</div>
-              <div>上传文件：{selectedTask.upload_file_name || "-"}</div>
-              <div>最近错误：{selectedTask.latest_error || "-"}</div>
-              <div>总进度：{Math.round((selectedTask.total_progress || 0) * 100)}%</div>
+
+              <section className="card panel-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>系统配置区</h3>
+                    <p>保存文本模型、图片模型和本地 API Key，新建任务默认继承这里的设置。</p>
+                  </div>
+                  <span className="section-badge">
+                    文本：{systemConfig.text_model_name} | 图片：{systemConfig.image_model_name}
+                  </span>
+                </div>
+
+                <form className="stack" onSubmit={handleSaveSystemConfig}>
+                  <div className="grid-2">
+                    <label>
+                      文本模型
+                      <select
+                        value={systemConfig.text_model_name}
+                        onChange={(e) => handleSystemConfigChange("text_model_name", e.target.value)}
+                        disabled={configSaving}
+                      >
+                        {TEXT_MODEL_OPTIONS.map((item) => (
+                          <option key={item.modelName} value={item.modelName}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      图片模型
+                      <select
+                        value={systemConfig.image_model_name}
+                        onChange={(e) => handleSystemConfigChange("image_model_name", e.target.value)}
+                        disabled={configSaving}
+                      >
+                        {IMAGE_MODEL_OPTIONS.map((item) => (
+                          <option key={item.modelName} value={item.modelName}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="full-width">
+                      文本模型 API Key
+                      <input
+                        type="password"
+                        value={systemConfig.text_api_key}
+                        onChange={(e) => handleSystemConfigChange("text_api_key", e.target.value)}
+                        placeholder="输入文本模型 API Key"
+                        autoComplete="off"
+                        disabled={configSaving}
+                      />
+                    </label>
+
+                    <label className="full-width">
+                      图片模型 API Key
+                      <input
+                        type="password"
+                        value={systemConfig.image_api_key}
+                        onChange={(e) => handleSystemConfigChange("image_api_key", e.target.value)}
+                        placeholder={
+                          systemConfig.image_provider === "disabled"
+                            ? "已关闭图像生成，无需填写"
+                            : "输入图片模型 API Key"
+                        }
+                        autoComplete="off"
+                        disabled={configSaving || systemConfig.image_provider === "disabled"}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="config-actions">
+                    <span className="muted-note">配置保存在本地系统配置文件中，不进入任务正文。</span>
+                    <button type="submit" disabled={configSaving}>
+                      {configSaving ? "保存中..." : "保存配置"}
+                    </button>
+                  </div>
+                  {isBusyForScope(["config"]) ? (
+                    <div className="inline-activity" role="status" aria-live="polite">
+                      <span className="inline-spinner" />
+                      <span>{busyLabel}</span>
+                    </div>
+                  ) : null}
+                </form>
+              </section>
+
+              <section className="card panel-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>最近日志</h3>
+                    <p>实时查看 Worker 和各阶段 Agent 的执行信息。</p>
+                  </div>
+                  <span className="section-badge">{recentLogs.length} 条</span>
+                </div>
+
+                {recentLogs.length === 0 ? (
+                  <p className="empty-note">暂无日志。</p>
+                ) : (
+                  <div className="log-box tall">
+                    {recentLogs.map((log) => (
+                      <article key={log.event_id} className="timeline-item">
+                        <div className="timeline-meta">
+                          <span>{log.stage}</span>
+                          <span>{log.status}</span>
+                        </div>
+                        <p>{log.message}</p>
+                        <time>{log.created_at}</time>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </aside>
+
+        <main className="center-panel">
+          <section className="card center-hero">
+            <div className="section-heading">
               <div>
-                节点进度：{selectedTask.completed_nodes || 0}/{selectedTask.total_nodes || 0}
+                <p className="eyebrow">Center Workspace</p>
+                <h2>目录树版本与节点执行状态</h2>
+                <p>中间区域保持常驻，用来对比目录版本、预览当前目录树并跟踪节点执行进度。</p>
               </div>
-              <div>任务心跳：{selectedTask.last_heartbeat_at || "-"}</div>
+              {selectedTask ? (
+                <span className="section-badge">{statusCn(selectedTask.status)}</span>
+              ) : null}
             </div>
 
-            <div className="output-panel">
+            {selectedTask ? (
+              <>
+                {workerRuntimeHint ? (
+                  <div className={`banner ${workerRuntimeHint.level}`}>
+                    {workerRuntimeHint.text}
+                  </div>
+                ) : null}
+                {nodeStates.some((node) => node.image_manual_required) ? (
+                  <div className="banner warning">
+                    存在图片需人工确认的节点。当前为宽松模式，任务仍可继续排版与导出；人工确认入口预留在节点状态区。
+                  </div>
+                ) : null}
+
+                <div className="hero-metrics">
+                  <div className="metric-card accent">
+                    <span>总进度</span>
+                    <strong>{Math.round((selectedTask.total_progress || 0) * 100)}%</strong>
+                    <p>当前阶段：{selectedTask.current_stage || "-"}</p>
+                  </div>
+                  <div className="metric-card">
+                    <span>节点进度</span>
+                    <strong>{selectedTask.completed_nodes || 0}/{selectedTask.total_nodes || 0}</strong>
+                    <p>当前节点：{selectedTask.current_node_uid || "-"}</p>
+                  </div>
+                  <div className="metric-card">
+                    <span>任务概览</span>
+                    <strong>{selectedTask.title}</strong>
+                    <p>ID：{selectedTask.task_id}</p>
+                  </div>
+                </div>
+
+                <div className="task-meta-grid">
+                  <div className="meta-chip"><span>确认目录</span><strong>{selectedTask.confirmed_toc_version || "-"}</strong></div>
+                  <div className="meta-chip"><span>上传文件</span><strong>{selectedTask.upload_file_name || "-"}</strong></div>
+                  <div className="meta-chip"><span>任务心跳</span><strong>{selectedTask.last_heartbeat_at || "-"}</strong></div>
+                  <div className="meta-chip"><span>最近错误</span><strong>{selectedTask.latest_error || "-"}</strong></div>
+                </div>
+
+                {parseReportHighlights.length > 0 ? (
+                  <div className="task-meta-grid compact">
+                    {parseReportHighlights.map((item) => (
+                      <div key={item.label} className="meta-chip soft">
+                        <span>{item.label}</span>
+                        <strong>{item.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="output-panel">
+                  <div>
+                    <strong>输出文件</strong>
+                    <p className="muted-note">
+                      稳定输出路径：artifacts/{selectedTask.task_id}/final/output.docx
+                    </p>
+                  </div>
+                  {selectedTask.status === "DONE" ? (
+                    <a
+                      className="download-link"
+                      href={outputUrl(selectedTask.task_id)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      下载 output.docx
+                    </a>
+                  ) : (
+                    <p className="muted-note">任务完成后可下载最终 Word 文档。</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="empty-note">请先在右侧选择或创建任务。</p>
+            )}
+          </section>
+
+          <section className="card panel-card">
+            <div className="section-heading">
               <div>
-                <strong>输出文件</strong>
-                <p className="muted-note">
-                  稳定输出路径：artifacts/{selectedTask.task_id}/final/output.docx
-                </p>
+                <h3>目录树版本</h3>
+                <p>切换目录版本、查看差异摘要和当前目录结构。</p>
               </div>
-              {selectedTask.status === "DONE" ? (
-                <a
-                  className="download-link"
-                  href={outputUrl(selectedTask.task_id)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  下载 output.docx
-                </a>
+              {selectedVersionNo ? <span className="section-badge">当前版本 v{selectedVersionNo}</span> : null}
+            </div>
+
+            {!canReviewToc && !canImportToc && selectedTask ? (
+              <p className="muted-note">
+                当前任务不在 TOC_REVIEW 阶段，目录已锁定或尚未进入目录审阅阶段。
+              </p>
+            ) : null}
+
+            <div className="version-toolbar">
+              {tocVersions.length === 0 ? (
+                <p className="empty-note">暂无目录版本。</p>
               ) : (
-                <p className="muted-note">
-                  任务完成后可下载最终 Word 文档。
-                </p>
+                tocVersions.map((item) => (
+                  <button
+                    key={item.toc_version_id}
+                    type="button"
+                    className={item.version_no === selectedVersionNo ? "version-btn active" : "version-btn"}
+                    onClick={() => handleSwitchVersion(item.version_no)}
+                    disabled={switchingVersionNo === item.version_no}
+                  >
+                    toc_v{item.version_no}
+                    {item.is_confirmed ? "（已确认）" : ""}
+                    {item.based_on_version_no ? ` <- v${item.based_on_version_no}` : ""}
+                  </button>
+                ))
               )}
             </div>
-          </>
-        ) : (
-          <p>请先选择任务。</p>
-        )}
-      </section>
 
-      <section className="card">
-        <h2>节点执行状态</h2>
-        {nodeStates.length === 0 ? (
-          <p>暂无节点状态。</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>节点</th>
-                  <th>标题</th>
-                  <th>状态</th>
-                  <th>阶段</th>
-                  <th>图片告警</th>
-                  <th>进度</th>
-                  <th>心跳</th>
-                </tr>
-              </thead>
-              <tbody>
-                {nodeStates.map((node) => (
-                  <tr key={node.node_uid}>
-                    <td>{displayNodeId(node.node_id)}</td>
-                    <td>{node.title}</td>
-                    <td>{statusCn(node.status)}</td>
-                    <td>{statusCn(node.current_stage)}</td>
-                    <td>
-                      <div>{imageWarningText(node)}</div>
-                      {node.image_manual_required ? (
-                        <span className="warn-tag">人工确认入口预留</span>
-                      ) : null}
-                    </td>
-                    <td>{Math.round((node.progress || 0) * 100)}%</td>
-                    <td>{node.last_heartbeat_at || "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>最近日志</h2>
-        {recentLogs.length === 0 ? (
-          <p>暂无日志。</p>
-        ) : (
-          <div className="log-box">
-            {recentLogs.map((log) => (
-              <p key={log.event_id}>
-                [{log.created_at}] [{log.stage}] [{log.status}] {log.message}
-              </p>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>目录版本与审阅</h2>
-        {!canReviewToc && !canImportToc && selectedTask ? (
-          <p className="muted-note">
-            当前任务不在 TOC_REVIEW 阶段，目录已锁定或尚未进入目录审阅阶段。
-          </p>
-        ) : null}
-        {canImportToc ? (
-          <p className="muted-note">
-            自动生成目录不正确时，可以直接粘贴完整目录树导入。系统会在必要时先完成需求解析，再生成新的 toc 版本。
-          </p>
-        ) : null}
-
-        <div className="layout toc-layout">
-          <div>
-            <h3>版本列表</h3>
-            {tocVersions.length === 0 ? <p>暂无目录版本。</p> : null}
-            <div className="version-list">
-              {tocVersions.map((item) => (
-                <button
-                  key={item.toc_version_id}
-                  type="button"
-                  className={item.version_no === selectedVersionNo ? "version-btn active" : "version-btn"}
-                  onClick={() => handleSwitchVersion(item.version_no)}
-                  disabled={switchingVersionNo === item.version_no}
-                >
-                  toc_v{item.version_no}
-                  {item.is_confirmed ? "（已确认）" : ""}
-                  {item.based_on_version_no ? ` <- v${item.based_on_version_no}` : ""}
-                </button>
-              ))}
+            <div className="diff-grid">
+              <div className="diff-card">
+                <span>新增节点</span>
+                <strong>{summary.add_count || 0}</strong>
+              </div>
+              <div className="diff-card">
+                <span>删除节点</span>
+                <strong>{summary.remove_count || 0}</strong>
+              </div>
+              <div className="diff-card">
+                <span>标题变更</span>
+                <strong>{summary.title_change_count || 0}</strong>
+              </div>
+              <div className="diff-card">
+                <span>顺序变化</span>
+                <strong>{summary.reorder_count || 0}</strong>
+              </div>
             </div>
 
-            <h3>版本差异摘要</h3>
-            {diffSummary ? (
-              <ul>
-                <li>新增节点：{summary.add_count || 0}</li>
-                <li>删除节点：{summary.remove_count || 0}</li>
-                <li>标题变更：{summary.title_change_count || 0}</li>
-                <li>顺序变化：{summary.reorder_count || 0}</li>
-              </ul>
-            ) : (
-              <p>当前版本无 diff（通常是首版）。</p>
-            )}
+            <div className="toc-preview-panel framed" style={{ height: `${tocPreviewHeight}px` }}>
+              {visibleTocNodes.length > 0 ? (
+                <TocTree nodes={visibleTocNodes} />
+              ) : (
+                <p className="empty-note">请选择目录版本查看。</p>
+              )}
+            </div>
+          </section>
 
-            <form className="stack" onSubmit={handleReviewToc}>
-              <label>
-                提交目录修改意见（基于当前选中版本）
-                <textarea
-                  rows={4}
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  disabled={loading || !canReviewToc || !selectedVersionNo}
-                  placeholder="例如：新增施工准备章节；调整章节顺序；修改第一个三级标题"
-                />
-              </label>
-              <button type="submit" disabled={loading || !canReviewToc || !selectedVersionNo}>
-                提交审阅意见并生成新版本
+          <section className="card panel-card">
+            <div className="section-heading">
+              <div>
+                <h3>节点执行状态</h3>
+                <p>这里显示每个最小生成单元的状态、阶段、图片告警和心跳。</p>
+              </div>
+              <span className="section-badge">{nodeStates.length} 个节点</span>
+            </div>
+
+            {nodeStates.length === 0 ? (
+              <p className="empty-note">暂无节点状态。</p>
+            ) : (
+              <div className="table-wrap status-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>节点</th>
+                      <th>标题</th>
+                      <th>状态</th>
+                      <th>阶段</th>
+                      <th>图片告警</th>
+                      <th>进度</th>
+                      <th>心跳</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nodeStates.map((node) => (
+                      <tr key={node.node_uid}>
+                        <td>{displayNodeId(node.node_id)}</td>
+                        <td>{node.title}</td>
+                        <td>{statusCn(node.status)}</td>
+                        <td>{statusCn(node.current_stage)}</td>
+                        <td>
+                          <div>{imageWarningText(node)}</div>
+                          {node.image_manual_required ? (
+                            <span className="warn-tag">人工确认入口预留</span>
+                          ) : null}
+                        </td>
+                        <td>{Math.round((node.progress || 0) * 100)}%</td>
+                        <td>{node.last_heartbeat_at || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </main>
+
+        <aside className={`side-panel right-panel ${rightCollapsed ? "collapsed" : ""}`}>
+          {rightCollapsed ? (
+            <CollapsedRail
+              side="right"
+              title="上传与指令"
+              subtitle="展开右侧"
+              onExpand={() => setRightCollapsed(false)}
+            />
+          ) : (
+            <div className="panel-stack">
+              <div className="panel-topbar">
+                <div>
+                  <p className="eyebrow">Right Panel</p>
+                  <h2>上传、指令与生成控制</h2>
+                </div>
+                <button type="button" className="ghost-btn" onClick={() => setRightCollapsed(true)}>
+                  收起
+                </button>
+              </div>
+
+              <section className="card panel-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>任务与上传文件</h3>
+                    <p>先创建或选择任务，再上传 `.docx` 需求文件。</p>
+                  </div>
+                </div>
+
+                <form className="stack" onSubmit={handleCreateTask}>
+                  <label>
+                    新任务标题
+                    <input
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      placeholder="输入任务标题"
+                    />
+                  </label>
+                  <button type="submit" disabled={loading}>
+                    创建任务
+                  </button>
+                </form>
+
+                {isBusyForScope(["task", "upload"]) ? (
+                  <div className="inline-activity" role="status" aria-live="polite">
+                    <span className="inline-spinner" />
+                    <span>{busyLabel}</span>
+                  </div>
+                ) : null}
+
+                <div className="divider" />
+
+                <div className="stack">
+                  <label>
+                    选择任务
+                    <select
+                      value={selectedTaskId}
+                      onChange={(e) => setSelectedTaskId(e.target.value)}
+                      disabled={loading}
+                    >
+                      <option value="">请选择任务</option>
+                      {tasks.map((task) => (
+                        <option key={task.task_id} value={task.task_id}>
+                          {task.task_id} | {task.title} | {statusCn(task.status)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <form className="stack" onSubmit={handleUpload}>
+                    <label>
+                      上传需求文档（仅 .docx）
+                      <input
+                        type="file"
+                        accept=".docx"
+                        onChange={handleFileChange}
+                        disabled={loading || !selectedTaskId}
+                      />
+                    </label>
+                    <button type="submit" disabled={loading || !selectedTaskId || !file}>
+                      保存上传文件
+                    </button>
+                  </form>
+                </div>
+              </section>
+
+              <section className="card panel-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>阶段操作</h3>
+                    <p>生成目录、确认目录并开始正文生成，导入完整目录树使用独立弹窗。</p>
+                  </div>
+                </div>
+
+                <div className="actions">
+                  <button
+                    type="button"
+                    onClick={handleGenerateToc}
+                    disabled={loading || !canBuildToc}
+                  >
+                    {buildTocLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmAndStart}
+                    disabled={loading || !canReviewToc || !selectedVersionNo}
+                  >
+                    2. 确认目录 / 开始生成内容
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn strong"
+                    onClick={() => setOutlineModalOpen(true)}
+                    disabled={loading || !canImportToc}
+                  >
+                    导入完整目录树
+                  </button>
+                </div>
+                {isBusyForScope(["toc", "confirm", "import"]) ? (
+                  <div className="inline-activity" role="status" aria-live="polite">
+                    <span className="inline-spinner" />
+                    <span>{busyLabel}</span>
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="card panel-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>AI 指令与目录树对话</h3>
+                    <p>这里复用同一个对话区：上方输入指令，下方查看 AI 目录修订记录。</p>
+                  </div>
+                  {selectedVersionNo ? <span className="section-badge">基于 v{selectedVersionNo}</span> : null}
+                </div>
+
+                {!canReviewToc && selectedTask ? (
+                  <p className="muted-note">
+                    当前任务不在 TOC_REVIEW 阶段，目录指令输入已锁定。
+                  </p>
+                ) : null}
+
+                <form className="stack" onSubmit={handleReviewToc}>
+                  <label>
+                    输入用户指令
+                    <textarea
+                      rows={6}
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      disabled={loading || !canReviewToc || !selectedVersionNo}
+                      placeholder="例如：新增施工准备章节；调整章节顺序；把售后部分并入第六章；将一级目录改成我提供的结构"
+                    />
+                  </label>
+                  <button type="submit" disabled={loading || !canReviewToc || !selectedVersionNo}>
+                    提交审阅意见并生成新版本
+                  </button>
+                </form>
+                {isBusyForScope(["review"]) ? (
+                  <div className="inline-activity" role="status" aria-live="polite">
+                    <span className="inline-spinner" />
+                    <span>{busyLabel}</span>
+                  </div>
+                ) : null}
+
+                <div className="dialog-box">
+                  {chatMessages.length === 0 ? (
+                    <p className="empty-note">暂无 AI 目录修订对话。</p>
+                  ) : (
+                    chatMessages.map((msg) => (
+                      <article
+                        key={msg.message_id}
+                        className={`chat-bubble ${msg.role === "user" ? "user" : "assistant"}`}
+                      >
+                        <div className="chat-meta">
+                          <span>{msg.role === "user" ? "用户" : msg.role === "assistant" ? "AI" : "系统"}</span>
+                          {msg.related_toc_version ? <span>v{msg.related_toc_version}</span> : null}
+                        </div>
+                        <p>{msg.content}</p>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {outlineModalOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setOutlineModalOpen(false)}
+        >
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="outline-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Import Full TOC</p>
+                <h2 id="outline-modal-title">导入完整目录树</h2>
+                <p>直接粘贴新的目录树结构，系统会基于当前任务生成新的 TOC 版本。</p>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => setOutlineModalOpen(false)}>
+                关闭
               </button>
-            </form>
+            </div>
 
             <form className="stack" onSubmit={handleImportToc}>
               <label>
-                直接导入完整目录树
+                新目录树
                 <textarea
-                  rows={12}
+                  rows={16}
                   value={outlineText}
                   onChange={(e) => setOutlineText(e.target.value)}
                   disabled={loading || !canImportToc}
                   placeholder={"例如：\n一、售后服务总体方案\n1.1 售后服务目标\n1.1.1 保障系统安全稳定运行"}
                 />
               </label>
-              <button type="submit" disabled={loading || !canImportToc}>
-                导入完整目录树并生成新版本
-              </button>
+              <div className="modal-actions">
+                <button type="button" className="ghost-btn" onClick={() => setOutlineModalOpen(false)}>
+                  取消
+                </button>
+                <button type="submit" disabled={loading || !canImportToc}>
+                  导入完整目录树并生成新版本
+                </button>
+              </div>
             </form>
           </div>
-
-          <div>
-            <h3>目录树预览</h3>
-            <div
-              className="toc-preview-panel"
-              style={{ minHeight: `${tocPreviewHeight}px` }}
-            >
-              {visibleTocNodes.length > 0 ? <TocTree nodes={visibleTocNodes} /> : <p>请选择目录版本查看。</p>}
-            </div>
-          </div>
         </div>
-      </section>
-
-      <section className="card">
-        <h2>目录审阅聊天记录</h2>
-        {chatMessages.length === 0 ? (
-          <p>暂无聊天记录。</p>
-        ) : (
-          <div className="log-box">
-            {chatMessages.map((msg) => (
-              <p key={msg.message_id}>
-                [{msg.role}] {msg.content}
-                {msg.related_toc_version ? ` (v${msg.related_toc_version})` : ""}
-              </p>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>parse_report 预览</h2>
-        {parseReport ? <pre>{JSON.stringify(parseReport, null, 2)}</pre> : <p>暂无解析报告。</p>}
-      </section>
+      ) : null}
     </div>
   );
 }

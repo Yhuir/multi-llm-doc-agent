@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from docx import Document
 
+from backend.agents.toc_generator import TOCGeneratorAgent
 from backend.app_service.task_service import TaskService
 from backend.models.enums import NodeStatus, TaskStatus
 from backend.worker.worker_process import WorkerProcess
@@ -11,11 +13,40 @@ from tests.helpers import build_settings, cleanup_temp_root, create_sample_docx,
 
 
 class EndToEndSmokeTestCase(unittest.TestCase):
+    _MODEL_TOC = """
+    {
+      "root_title": "视频监控系统实施方案",
+      "chapters": [
+        {
+          "title": "视频监控系统建设范围",
+          "children": [
+            {"title": "前端点位部署要求", "children": []},
+            {"title": "平台接入与联调要求", "children": []}
+          ]
+        },
+        {
+          "title": "施工与验收要求",
+          "children": [
+            {"title": "施工组织与质量控制", "children": []},
+            {"title": "验收资料与签认要求", "children": []}
+          ]
+        }
+      ]
+    }
+    """
+
     def setUp(self) -> None:
         self.temp_root = make_temp_root("e2e_smoke_test_")
         self.settings = build_settings(self.temp_root)
         self.service = TaskService(settings=self.settings)
         self.worker = WorkerProcess(self.settings)
+        self.service.update_system_config(
+            {
+                "text_provider": "minimax",
+                "text_model_name": "MiniMax-M2.5",
+                "text_api_key": "fake-key",
+            }
+        )
 
     def tearDown(self) -> None:
         cleanup_temp_root(self.temp_root)
@@ -34,8 +65,12 @@ class EndToEndSmokeTestCase(unittest.TestCase):
 
         upload_path = self.service.save_upload(task.task_id, "sample.docx", source_docx.read_bytes())
         parse_payload = self.service.parse_requirement(task.task_id)
-        v1 = self.service.generate_toc(task.task_id)
-        v2 = self.service.review_toc(task.task_id, "请修订第一章节标题")
+        with patch.object(TOCGeneratorAgent, "_request_minimax_completion", return_value=self._MODEL_TOC):
+            v1 = self.service.generate_toc(task.task_id)
+        toc_v1 = self.service.get_toc_document(task.task_id, v1.version_no)
+        first_title = toc_v1["tree"][0]["children"][0]["title"]
+        self.service.update_system_config({"text_api_key": ""})
+        v2 = self.service.review_toc(task.task_id, f'把“{first_title}”改成“{first_title}（修订版）”')
         confirm_payload = self.service.confirm_and_start_generation(task.task_id, v2.version_no)
         seeded_nodes = confirm_payload["seeded_nodes"]
 

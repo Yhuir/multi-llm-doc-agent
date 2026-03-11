@@ -107,6 +107,7 @@ class TOCReviewChatAgent:
 
         if not changed:
             return updated
+        self._normalize_review_tree(updated.tree)
         return updated
 
     def _normalize_model_actions(
@@ -929,20 +930,77 @@ class TOCReviewChatAgent:
 
     def _cleanup_feedback_title(self, text: str) -> str:
         cleaned = self._strip_quotes(text)
+        compact = cleaned.strip()
+        if re.fullmatch(r"\d+(?:\.\d+)*", compact) or compact.startswith("uid_"):
+            return compact
         cleaned = re.sub(r"^(?:请|请把|请将|把|将|在|到|对)\s*", "", cleaned)
         cleaned = re.sub(r"(?:吧|一下|一些|一下子|谢谢|即可|就行了?)$", "", cleaned)
         cleaned = cleaned.strip(" ：:，,。；;、")
-        return cleaned.strip()
+        return self._clean_generated_title(cleaned.strip())
 
     def _strip_quotes(self, text: str) -> str:
         return text.strip().strip("“”\"'‘’")
 
     def _normalize_title(self, text: str) -> str:
-        cleaned = self._strip_quotes(text)
-        cleaned = re.sub(r"^[0-9]+(?:\.[0-9]+)*", "", cleaned)
-        cleaned = re.sub(r"^[（(]?[一二三四五六七八九十百千0-9]+[)）.、]+", "", cleaned)
+        cleaned = self._clean_generated_title(self._strip_quotes(text))
         cleaned = re.sub(r"[\s，。；：:、,.!！?？()（）【】\\[\\]<>《》“”\"'‘’\\-—_]+", "", cleaned)
         return cleaned.lower()
+
+    def _clean_generated_title(self, text: str) -> str:
+        cleaned = re.sub(r"\s+", "", str(text))
+        original = cleaned.strip("，。；：- ")
+        previous = None
+        while cleaned and cleaned != previous:
+            previous = cleaned
+            cleaned = re.sub(r"^[0-9]+(?:[.．][0-9]+)*(?:[.．、\\-])?", "", cleaned)
+            cleaned = re.sub(r"^[（(]?[一二三四五六七八九十百千万0-9]+[)）.、]+", "", cleaned)
+            cleaned = re.sub(r"^第[一二三四五六七八九十百千万0-9]+[章节篇部分卷编回节]\s*", "", cleaned)
+            cleaned = cleaned.strip("，。；：- ")
+        return cleaned or original
+
+    def _normalize_review_tree(self, tree: list[TOCNode]) -> None:
+        for index, root in enumerate(tree, start=1):
+            root.level = 1
+            self._normalize_review_subtree(root, expected_level=1, occurrence=index)
+
+    def _normalize_review_subtree(self, node: TOCNode, *, expected_level: int, occurrence: int) -> None:
+        node.level = expected_level
+        node.title = self._clean_generated_title(node.title)
+
+        if node.children:
+            normalized_children: list[TOCNode] = []
+            for index, child in enumerate(node.children, start=1):
+                if child.level > 4:
+                    self._relevel_subtree(child, min(4, node.level + 1))
+                self._normalize_review_subtree(child, expected_level=node.level + 1, occurrence=index)
+                normalized_children.append(child)
+            node.children = normalized_children
+            node.is_generation_unit = False
+            node.constraints = None
+            return
+
+        if node.level >= 3:
+            node.is_generation_unit = True
+            node.constraints = node.constraints or self._generation_constraints()
+            return
+
+        synthetic_title = node.title
+        synthetic_child = TOCNode(
+            node_uid=self._stable_uid(
+                node.level + 1,
+                f"{node.node_uid}::{self._normalize_title(synthetic_title)}::synthetic::{occurrence}",
+            ),
+            node_id="",
+            level=node.level + 1,
+            title=synthetic_title,
+            is_generation_unit=True,
+            source_refs=list(node.source_refs),
+            constraints=self._generation_constraints(),
+            children=[],
+        )
+        node.children = [synthetic_child]
+        node.is_generation_unit = False
+        node.constraints = None
 
     def _visible_node_id(self, node_id: str) -> str:
         parts = node_id.split(".")

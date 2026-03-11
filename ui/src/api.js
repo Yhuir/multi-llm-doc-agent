@@ -82,7 +82,10 @@ export async function getParseReport(taskId) {
 }
 
 export async function generateToc(taskId) {
-  return request(`/tasks/${taskId}/toc/generate`, { method: "POST" });
+  return request(`/tasks/${taskId}/toc/generate`, {
+    method: "POST",
+    timeoutMs: 300000
+  });
 }
 
 export async function listTocVersions(taskId) {

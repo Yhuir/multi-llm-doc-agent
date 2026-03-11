@@ -134,7 +134,11 @@ class TaskService:
         return self.orchestrator.run_parse_requirement(task_id)
 
     def generate_toc(self, task_id: str):
-        return self.orchestrator.run_generate_toc(task_id)
+        config = self.get_system_config()
+        task = self.get_task(task_id)
+        if task is not None and task.text_provider:
+            config["text_provider"] = task.text_provider
+        return self.orchestrator.run_generate_toc(task_id, generation_config=config)
 
     def review_toc(
         self,

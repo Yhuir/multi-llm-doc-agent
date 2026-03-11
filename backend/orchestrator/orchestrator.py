@@ -118,7 +118,12 @@ class Orchestrator:
             "parse_report": parse_report.model_dump(mode="json"),
         }
 
-    def run_generate_toc(self, task_id: str) -> TOCVersion:
+    def run_generate_toc(
+        self,
+        task_id: str,
+        *,
+        generation_config: dict[str, Any] | None = None,
+    ) -> TOCVersion:
         task = self._require_task(task_id)
         if task.status == TaskStatus.NEW:
             self.run_parse_requirement(task_id)
@@ -136,7 +141,11 @@ class Orchestrator:
         latest = self.toc_repository.get_latest_version(task_id)
         version_no = 1 if latest is None else latest.version_no + 1
 
-        toc_doc = self.toc_generator.generate(requirement=requirement, version_no=version_no)
+        toc_doc = self.toc_generator.generate(
+            requirement=requirement,
+            version_no=version_no,
+            generation_config=generation_config,
+        )
         self._renumber_node_ids(toc_doc.tree)
         toc_doc.version = version_no
         toc_doc.generated_at = utc_now_iso()
@@ -181,8 +190,13 @@ class Orchestrator:
         return toc_version
 
     # Backward-compatible method name used by earlier rounds.
-    def run_parse_and_generate_toc(self, task_id: str) -> TOCVersion:
-        return self.run_generate_toc(task_id)
+    def run_parse_and_generate_toc(
+        self,
+        task_id: str,
+        *,
+        generation_config: dict[str, Any] | None = None,
+    ) -> TOCVersion:
+        return self.run_generate_toc(task_id, generation_config=generation_config)
 
     def review_toc(
         self,

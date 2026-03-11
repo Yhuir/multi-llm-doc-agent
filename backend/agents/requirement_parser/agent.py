@@ -201,7 +201,7 @@ class RequirementParserAgent:
 
     def _build_source_index(self, paragraphs: list[_ParagraphEntry]) -> dict[str, SourceIndexItem]:
         source_index: dict[str, SourceIndexItem] = {}
-        for paragraph in paragraphs[:300]:
+        for paragraph in paragraphs:
             ref = f"p1#L{paragraph.line_no}"
             source_index[ref] = SourceIndexItem(
                 page=1,
