@@ -74,7 +74,10 @@ export async function uploadDocx(taskId, file) {
 }
 
 export async function parseRequirement(taskId) {
-  return request(`/tasks/${taskId}/parse`, { method: "POST" });
+  return request(`/tasks/${taskId}/parse`, {
+    method: "POST",
+    timeoutMs: 900000
+  });
 }
 
 export async function getParseReport(taskId) {
@@ -84,7 +87,7 @@ export async function getParseReport(taskId) {
 export async function generateToc(taskId) {
   return request(`/tasks/${taskId}/toc/generate`, {
     method: "POST",
-    timeoutMs: 300000
+    timeoutMs: 900000
   });
 }
 
@@ -94,6 +97,19 @@ export async function listTocVersions(taskId) {
 
 export async function getToc(taskId, versionNo) {
   return request(`/tasks/${taskId}/toc/${versionNo}`);
+}
+
+export async function getTocWordBudget(taskId, versionNo) {
+  return request(`/tasks/${taskId}/toc/${versionNo}/word-budget`);
+}
+
+export async function updateTocWordBudget(taskId, versionNo, chapters) {
+  return request(`/tasks/${taskId}/toc/${versionNo}/word-budget`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chapters }),
+    timeoutMs: 30000
+  });
 }
 
 export async function getConfirmedToc(taskId) {
@@ -108,7 +124,7 @@ export async function reviewToc(taskId, feedback, basedOnVersionNo = null) {
       feedback,
       based_on_version_no: basedOnVersionNo
     }),
-    timeoutMs: 60000
+    timeoutMs: 300000
   });
 }
 
@@ -120,7 +136,7 @@ export async function importTocOutline(taskId, outlineText, basedOnVersionNo = n
       outline_text: outlineText,
       based_on_version_no: basedOnVersionNo
     }),
-    timeoutMs: 60000
+    timeoutMs: 900000
   });
 }
 

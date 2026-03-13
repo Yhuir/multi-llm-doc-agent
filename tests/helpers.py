@@ -80,6 +80,26 @@ def sample_requirement_document(project_name: str = "智慧园区项目") -> Req
             standards=["GB50348"],
             acceptance=["验收阶段应形成记录并完成签认。"],
         ),
+        bidding_requirements=[
+            RequirementItem(
+                type="technical",
+                key="front_end_deploy",
+                value="完成前端设备部署、链路联调、平台接入与验收留痕。",
+                source_ref="p1#L1",
+            ),
+            RequirementItem(
+                type="standard",
+                key="gb50348",
+                value="GB50348",
+                source_ref="p1#L2",
+            ),
+            RequirementItem(
+                type="acceptance",
+                key="acceptance_record",
+                value="验收阶段应形成记录并完成签认。",
+                source_ref="p1#L2",
+            ),
+        ],
         source_index={
             "p1#L1": SourceIndexItem(
                 page=1,

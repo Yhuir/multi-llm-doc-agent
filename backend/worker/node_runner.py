@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ from backend.models.schemas import (
     EntityExtraction,
     EventLog,
     FactCheck,
+    GenerationWordPlan,
+    GenerationWordTarget,
     ImagePrompts,
     ImageRelevanceReport,
     ImageScoreItem,
@@ -284,6 +287,10 @@ class NodeRunner:
             current_stage="GENERATING",
         )
 
+        recovered_failures = self._recover_lenient_length_failures(task_id)
+        if recovered_failures > 0:
+            nodes = self.node_repository.list_by_task(task_id)
+
         for item in nodes:
             node = self.node_repository.get(task_id, item.node_uid)
             if node is None:
@@ -320,6 +327,55 @@ class NodeRunner:
             failed_nodes=failed_nodes,
             manual_nodes=manual_nodes,
         )
+
+    def _recover_lenient_length_failures(self, task_id: str) -> int:
+        recovered = 0
+        for node in self.node_repository.list_by_task(task_id):
+            node_dir = self.artifacts_root / task_id / "nodes" / node.node_uid
+            if not self._is_lenient_length_failure(node=node, node_dir=node_dir):
+                continue
+            self.node_repository.update_status(
+                task_id,
+                node.node_uid,
+                status=NodeStatus.IMAGE_DONE,
+                progress=self._STAGE_CONFIGS["image_generate"].progress_done,
+                current_stage=NodeStatus.IMAGE_DONE.value,
+                last_error=None,
+                finished_at=None,
+            )
+            recovered += 1
+            self._log(
+                task_id,
+                node_uid=node.node_uid,
+                stage="LENGTH_RECOVER",
+                status=EventStatus.WARNING,
+                message=(
+                    "Recovered node from previous length-stage failure; "
+                    "resume from IMAGE_DONE and continue generation."
+                ),
+                output_artifact_path=str(node_dir / "text.json"),
+                meta_json={
+                    "node_id": node.node_id,
+                    "previous_error": node.last_error,
+                },
+            )
+        return recovered
+
+    def _is_lenient_length_failure(self, *, node: NodeState, node_dir: Path) -> bool:
+        if node.status != NodeStatus.NODE_FAILED:
+            return False
+        if node.progress < self._STAGE_CONFIGS["length"].progress_start:
+            return False
+        if node.progress >= self._STAGE_CONFIGS["consistency"].progress_start:
+            return False
+        if not (node_dir / "text.json").exists():
+            return False
+        if not (node_dir / "images.json").exists():
+            return False
+        last_error = str(node.last_error or "").lower()
+        if "length control failed" in last_error:
+            return True
+        return "section writing model request failed" in last_error
 
     def run_layout(self, task_id: str) -> Path:
         started = time.perf_counter()
@@ -981,7 +1037,16 @@ class NodeRunner:
 
     def _write_text_artifact(self, node: NodeState, node_dir: Path) -> Path:
         requirement = self._load_requirement(node.task_id)
-        artifact = self.section_writer.generate(node=node, requirement=requirement)
+        toc_document = self._load_confirmed_toc(node.task_id)
+        word_target = self._load_generation_word_target(node.task_id, node.node_uid)
+        generation_config = self._text_provider_config(node.task_id)
+        artifact = self.section_writer.generate(
+            node=node,
+            requirement=requirement,
+            toc_document=toc_document,
+            target_words=word_target.target_words if word_target is not None else None,
+            generation_config=generation_config,
+        )
         path = node_dir / "text.json"
         self._write_json(path, artifact.model_dump(mode="json"))
         return path
@@ -995,16 +1060,20 @@ class NodeRunner:
         node_text = NodeText.model_validate(
             json.loads(text_path.read_text(encoding="utf-8"))
         )
+        toc_document = self._load_confirmed_toc(node.task_id)
         artifact = self.fact_grounding.check(node_text=node_text, requirement=requirement)
         path = node_dir / "fact_check.json"
         self._write_json(path, artifact.model_dump(mode="json"))
 
         if artifact.result != AgentResult.PASS:
             if node.retry_fact == 0:
+                generation_config = self._text_provider_config(node.task_id)
                 revised = self.section_writer.revise_text(
                     node_text=node_text,
                     fact_check=artifact,
                     requirement=requirement,
+                    toc_document=toc_document,
+                    generation_config=generation_config,
                 )
                 self._write_json(text_path, revised.model_dump(mode="json"))
                 self._log(
@@ -1019,8 +1088,25 @@ class NodeRunner:
                         "unsupported_count": len(artifact.unsupported_claims),
                     },
                 )
-            raise RuntimeError(
-                f"Fact grounding failed: grounded_ratio={artifact.grounded_ratio}"
+                raise RuntimeError(
+                    f"Fact grounding failed: grounded_ratio={artifact.grounded_ratio}"
+                )
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="FACT_RISK",
+                status=EventStatus.WARNING,
+                message=(
+                    "Fact grounding failed after revise retry; "
+                    "continue to image generation in non-blocking risk mode."
+                ),
+                output_artifact_path=str(path),
+                meta_json={
+                    "grounded_ratio": artifact.grounded_ratio,
+                    "unsupported_count": len(artifact.unsupported_claims),
+                    "weak_count": len(artifact.weak_claims),
+                    "result": artifact.result.value,
+                },
             )
         return path
 
@@ -1030,8 +1116,26 @@ class NodeRunner:
             raise RuntimeError("text.json missing before entity extraction")
 
         fact_check = self._load_fact_check(node_dir)
-        if fact_check is None or fact_check.result != AgentResult.PASS:
-            raise RuntimeError("fact_check.json missing or failed before image generation")
+        if fact_check is None:
+            raise RuntimeError("fact_check.json missing before image generation")
+        if fact_check.result != AgentResult.PASS:
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="FACT_RISK",
+                status=EventStatus.WARNING,
+                message=(
+                    "Proceeding with image generation despite fact grounding failure; "
+                    "fact risk is marked and retained."
+                ),
+                output_artifact_path=str(node_dir / "fact_check.json"),
+                meta_json={
+                    "grounded_ratio": fact_check.grounded_ratio,
+                    "unsupported_count": len(fact_check.unsupported_claims),
+                    "weak_count": len(fact_check.weak_claims),
+                    "result": fact_check.result.value,
+                },
+            )
 
         provider_config = self._image_provider_config(node.task_id)
         if self._image_generation_disabled(provider_config):
@@ -1067,7 +1171,11 @@ class NodeRunner:
 
         node_text = self._load_node_text(node_dir)
         entities = self.entity_extractor.extract(node_text=node_text, fact_check=fact_check)
-        prompts = self.image_prompt.build(entities=entities, node_text=node_text)
+        prompts = self.image_prompt.build(
+            entities=entities,
+            node_text=node_text,
+            prompt_config=provider_config,
+        )
         images = ImagesArtifact(node_uid=node.node_uid, images=[])
 
         for prompt in prompts.prompts:
@@ -1303,6 +1411,13 @@ class NodeRunner:
             config.setdefault("text_provider", task.text_provider)
         return config
 
+    def _text_provider_config(self, task_id: str) -> dict[str, Any]:
+        config = dict(self.system_config_getter() or {})
+        task = self.task_repository.get(task_id)
+        if task is not None:
+            config.setdefault("text_provider", task.text_provider)
+        return config
+
     @staticmethod
     def _image_generation_disabled(provider_config: dict[str, Any] | None) -> bool:
         if not provider_config:
@@ -1317,21 +1432,85 @@ class NodeRunner:
             raise RuntimeError("text.json missing before length control")
 
         requirement = self._load_requirement(node.task_id)
+        toc_document = self._load_confirmed_toc(node.task_id)
         node_text = NodeText.model_validate(
             json.loads(text_path.read_text(encoding="utf-8"))
         )
+        word_target = self._load_generation_word_target(node.task_id, node.node_uid)
+        generation_config = self._text_provider_config(node.task_id)
+        min_words = word_target.min_words if word_target is not None else 1950
+        max_words = word_target.max_words if word_target is not None else 2050
+        missing_words = max(0, min_words - node_text.word_count)
+        expand_rounds = max(2, math.ceil(missing_words / 900)) if missing_words else 2
         controlled, details = self.length_control.control(
             node_text=node_text,
             requirement=requirement,
+            min_words=min_words,
+            max_words=max_words,
+            max_expand_rounds=expand_rounds,
         )
-        if details["result"] != "PASS":
-            raise RuntimeError(
-                f"Length control failed: after_word_count={details['after_word_count']}"
+        llm_revision_rounds = 0
+        while details["result"] != "PASS" and llm_revision_rounds < expand_rounds:
+            llm_revision_rounds += 1
+            try:
+                controlled = self.section_writer.revise_for_length(
+                    node_text=controlled,
+                    requirement=requirement,
+                    toc_document=toc_document,
+                    min_words=min_words,
+                    max_words=max_words,
+                    generation_config=generation_config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                details["result"] = "FAIL"
+                details["lenient_reason"] = (
+                    "Section writer revision failed during length control; "
+                    f"continue with current text: {exc}"
+                )
+                break
+            controlled, details = self.length_control.control(
+                node_text=controlled,
+                requirement=requirement,
+                min_words=min_words,
+                max_words=max_words,
+                max_expand_rounds=expand_rounds,
             )
         self._write_json(text_path, controlled.model_dump(mode="json"))
 
         path = node_dir / "length_control.json"
         details["generated_at"] = utc_now_iso()
+        details["llm_revision_rounds"] = llm_revision_rounds
+        details["revision_limit"] = expand_rounds
+        if word_target is not None:
+            details["chapter_title"] = word_target.chapter_title
+            details["target_words"] = word_target.target_words
+        if details["result"] != "PASS":
+            details["lenient_pass"] = True
+            details["lenient_reason"] = (
+                details.get("lenient_reason")
+                or (
+                    "Length target was not met after bounded expansion; "
+                    "continue generation with risk flag."
+                )
+            )
+            self._log(
+                node.task_id,
+                node_uid=node.node_uid,
+                stage="LENGTH_RISK",
+                status=EventStatus.WARNING,
+                message=(
+                    "Length control did not reach target but generation will continue "
+                    "in lenient risk mode."
+                ),
+                output_artifact_path=str(text_path),
+                meta_json={
+                    "after_word_count": details.get("after_word_count"),
+                    "min_words": min_words,
+                    "max_words": max_words,
+                    "llm_revision_rounds": llm_revision_rounds,
+                    "reason": details["lenient_reason"],
+                },
+            )
         self._write_json(path, details)
         return path
 
@@ -1465,6 +1644,21 @@ class NodeRunner:
         path = node_dir / "metrics.json"
         self._write_json(path, artifact.model_dump(mode="json"))
         return path
+
+    def _load_generation_word_target(
+        self,
+        task_id: str,
+        node_uid: str,
+    ) -> GenerationWordTarget | None:
+        path = self.artifacts_root / task_id / "toc" / "generation_word_plan.json"
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        plan = GenerationWordPlan.model_validate(payload)
+        for item in plan.node_targets:
+            if item.node_uid == node_uid:
+                return item
+        return None
 
     def _load_confirmed_toc(self, task_id: str) -> TOCDocument:
         path = self.artifacts_root / task_id / "toc" / "toc_confirmed.json"

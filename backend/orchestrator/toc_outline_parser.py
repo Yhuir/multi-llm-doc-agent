@@ -30,8 +30,8 @@ def build_toc_document_from_outline(
     parsed_lines = _parse_outline_lines(outline_text)
     root = TOCNode(
         node_uid="uid_root_001",
-        node_id="1",
-        level=1,
+        node_id="",
+        level=0,
         title=root_title,
         is_generation_unit=False,
         children=[],
@@ -39,14 +39,14 @@ def build_toc_document_from_outline(
 
     stack: list[TOCNode] = [root]
     for item in parsed_lines:
-        internal_level = item.visible_level + 1
+        internal_level = item.visible_level
         if internal_level > 4:
             raise ValueError("目录树最多支持到四级，请将最小生成单元控制在三级或四级。")
 
-        while len(stack) >= internal_level:
+        while len(stack) > internal_level:
             stack.pop()
 
-        if len(stack) != internal_level - 1:
+        if len(stack) != internal_level:
             raise ValueError(f"目录层级缺少父节点，请检查这一行前后的层级关系：{item.raw_number} {item.title}")
 
         parent = stack[-1]
@@ -147,21 +147,21 @@ def _mark_generation_units(root: TOCNode) -> int:
 
 
 def _renumber_node_ids(tree: list[TOCNode]) -> None:
-    for root_index, root in enumerate(tree, start=1):
-        root.node_id = str(root_index)
+    for root in tree:
+        root.node_id = ""
         _renumber_children(root)
 
 
 def _renumber_children(parent: TOCNode) -> None:
     for idx, child in enumerate(parent.children, start=1):
-        child.node_id = f"{parent.node_id}.{idx}"
+        child.node_id = str(idx) if not parent.node_id else f"{parent.node_id}.{idx}"
         _renumber_children(child)
 
 
 def _generation_constraints() -> dict[str, object]:
     return {
-        "min_words": 1800,
-        "recommended_words": [1800, 2200],
+        "min_words": 1,
+        "recommended_words": [],
         "images": [2, 3],
     }
 

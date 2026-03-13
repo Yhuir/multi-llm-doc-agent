@@ -155,6 +155,39 @@ npm run dev
 - UI: `http://localhost:5173`
 - API: `http://localhost:8000`
 
+### 7.4 长时间运行推荐：Watchdog
+
+开发调试时继续使用 `uvicorn --reload` 即可。  
+如果需要夜间长时间跑任务，建议改用 watchdog，而不是固定定时重启：
+
+```bash
+./run_watchdog.sh
+```
+
+watchdog 会：
+- 以非 `--reload` 方式启动 API
+- 启动 Worker
+- 通过 `GET /health` 检查 API
+- 通过 SQLite 中的任务/节点心跳检查 Worker
+- 仅在服务异常或心跳超时后重启对应进程
+
+日志目录：
+
+```text
+artifacts/runtime/logs/
+```
+
+PID 记录目录：
+
+```text
+artifacts/runtime/pids/
+```
+
+默认策略：
+- API 连续 3 次健康检查失败才重启
+- Worker 只有在可运行任务心跳超过 15 分钟未更新时才重启
+- 不做固定“每小时重启一次”的硬打断
+
 ## 8. 典型使用流程
 
 1. 打开 React UI
@@ -242,7 +275,47 @@ python -m unittest discover -s tests
 - checkpoint / resume
 - layout/export smoke
 - image pipeline smoke
+- watchdog 心跳判定
 - 最小 e2e smoke
+
+## 15. 部署守护文件
+
+macOS:
+
+```bash
+./deploy/macos/install_launchd.sh
+```
+
+该命令会安装并启动一个 watchdog，由 watchdog 托管：
+- API
+- Worker
+- UI（Vite 开发服务器）
+
+卸载：
+
+```bash
+./deploy/macos/uninstall_launchd.sh
+```
+
+Windows:
+
+- 手动后台启动：
+
+```powershell
+deploy\windows\Start-App.bat
+```
+
+- 安装开机/登录后自动守护：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\Install-WatchdogTask.ps1
+```
+
+- 卸载计划任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\Uninstall-WatchdogTask.ps1
+```
 
 ## 13. 当前限制
 
@@ -259,4 +332,3 @@ python -m unittest discover -s tests
 - 加强恢复策略与异常分级
 - 补更多 API 层测试和前端交互测试
 - 补更细的 Word 视觉回归检查
-

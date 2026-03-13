@@ -645,6 +645,11 @@ button:disabled {
   font-size: 24px;
 }
 
+.diff-card.accent-soft {
+  background: rgba(27, 95, 167, 0.08);
+  border-color: rgba(27, 95, 167, 0.18);
+}
+
 .toc-preview-panel {
   overflow: auto;
   border-radius: 20px;
@@ -675,6 +680,37 @@ button:disabled {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
+  line-height: 1.5;
+}
+
+.word-budget-tree {
+  padding-right: 4px;
+}
+
+.budget-tree-line {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.budget-input-group {
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.budget-input-group input {
+  min-height: 40px;
+}
+
+.budget-tree-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -837,6 +873,10 @@ tbody tr:hover {
   box-shadow: 0 28px 80px rgba(24, 41, 61, 0.22);
 }
 
+.modal-card.wide {
+  width: min(1100px, calc(100vw - 32px));
+}
+
 .modal-header {
   display: flex;
   align-items: flex-start;
@@ -858,6 +898,16 @@ tbody tr:hover {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.word-budget-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.budget-modal-tree {
+  height: min(58vh, 720px);
 }
 
 @keyframes spin {
@@ -944,12 +994,21 @@ tbody tr:hover {
   .hero-metrics,
   .task-meta-grid,
   .task-meta-grid.compact,
-  .diff-grid {
+  .diff-grid,
+  .word-budget-summary {
     grid-template-columns: 1fr;
   }
 
   .section-badge {
     align-self: flex-start;
+  }
+
+  .budget-tree-line {
+    flex-direction: column;
+  }
+
+  .budget-input-group {
+    min-width: 100%;
   }
 }
 

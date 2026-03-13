@@ -23,6 +23,7 @@ class TOCGeneratorAgent:
     """Generate a TOC from the parsed requirement by calling the configured text model."""
 
     _MINIMAX_TEXT_ENDPOINT = "https://api.minimaxi.com/v1/text/chatcompletion_v2"
+    _WHATAI_TEXT_ENDPOINT = "https://api.whatai.cc/v1/chat/completions"
     _JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", flags=re.S)
     _LINE_NO_PATTERN = re.compile(r"#L(\d+)$")
 
@@ -33,38 +34,93 @@ class TOCGeneratorAgent:
         version_no: int,
         generation_config: dict[str, Any] | None = None,
     ) -> TOCDocument:
-        config = generation_config or {}
-        provider = str(config.get("text_provider") or "").strip().lower()
-        model_name = str(config.get("text_model_name") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
-        api_key = str(config.get("text_api_key") or "").strip()
-
-        if provider != "minimax":
-            raise ValueError(
-                "TOC generation requires a supported text model provider. "
-                f"Current provider: {provider or 'unset'}."
-            )
-        if not api_key:
-            raise ValueError("TOC generation requires `text_api_key`. Please configure the text model first.")
-
         source_lines = self._source_lines(requirement)
         if not source_lines:
             raise ValueError("requirement.json does not contain parsed source text.")
 
         prompt = self._build_generation_prompt(requirement=requirement, source_lines=source_lines)
-        content = self._request_minimax_completion(
+        return self._generate_from_prompt(
+            requirement=requirement,
+            version_no=version_no,
+            based_on_version=None,
+            generation_config=generation_config,
+            prompt=prompt,
+            outline_guidance=None,
+        )
+
+    def generate_from_outline(
+        self,
+        *,
+        requirement: RequirementDocument,
+        outline_guidance: TOCDocument,
+        version_no: int,
+        based_on_version: int | None = None,
+        generation_config: dict[str, Any] | None = None,
+    ) -> TOCDocument:
+        source_lines = self._source_lines(requirement)
+        if not source_lines:
+            raise ValueError("requirement.json does not contain parsed source text.")
+
+        prompt = self._build_outline_guided_prompt(
+            requirement=requirement,
+            source_lines=source_lines,
+            outline_guidance=outline_guidance,
+        )
+        return self._generate_from_prompt(
+            requirement=requirement,
+            version_no=version_no,
+            based_on_version=based_on_version,
+            generation_config=generation_config,
+            prompt=prompt,
+            outline_guidance=outline_guidance,
+        )
+
+    def _generate_from_prompt(
+        self,
+        *,
+        requirement: RequirementDocument,
+        version_no: int,
+        based_on_version: int | None,
+        generation_config: dict[str, Any] | None,
+        prompt: str,
+        outline_guidance: TOCDocument | None,
+    ) -> TOCDocument:
+        provider, model_name, api_key = self._resolve_generation_config(generation_config)
+        request_fn = (
+            self._request_minimax_completion
+            if provider == "minimax"
+            else self._request_whatai_completion
+        )
+        content = request_fn(
             api_key=api_key,
             model_name=model_name,
             prompt=prompt,
         )
         draft_root = self._parse_model_output_with_repair(
             requirement=requirement,
+            provider=provider,
             model_name=model_name,
             api_key=api_key,
             initial_content=content,
+            outline_guidance=outline_guidance,
         )
         root = self._materialize_tree(draft_root=draft_root, requirement=requirement)
-        self._validate_subsystem_coverage(requirement=requirement, tree=[root])
-        return TOCDocument(version=version_no, based_on_version=None, tree=[root])
+        return TOCDocument(version=version_no, based_on_version=based_on_version, tree=[root])
+
+    def _resolve_generation_config(self, generation_config: dict[str, Any] | None) -> tuple[str, str, str]:
+        config = generation_config or {}
+        provider = str(config.get("text_provider") or "").strip().lower()
+        model_name = str(config.get("text_model_name") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
+        api_key = str(config.get("text_api_key") or "").strip()
+
+        if provider not in {"minimax", "whatai", "google"}:
+            raise ValueError(
+                "TOC generation requires a supported text model provider. "
+                f"Current provider: {provider or 'unset'}."
+            )
+        if not api_key:
+            raise ValueError("TOC generation requires `text_api_key`. Please configure the text model first.")
+        return provider, model_name, api_key
 
     def _request_minimax_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
         payload = {
@@ -120,28 +176,75 @@ class TOCGeneratorAgent:
             raise ValueError("TOC generation model returned empty content.")
         return content
 
+    def _request_whatai_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是工程实施文档目录生成器。"
+                        "必须基于用户上传文档的全文解析结果生成目录，禁止套用任何预设模板。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+        }
+        req = urlrequest.Request(
+            self._WHATAI_TEXT_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlrequest.urlopen(req, timeout=240) as response:
+                body = response.read().decode("utf-8")
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"TOC generation model request failed: HTTP {exc.code} {detail}") from exc
+        except (urlerror.URLError, TimeoutError) as exc:
+            raise ValueError(f"TOC generation model request failed: {exc}") from exc
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("TOC generation model returned invalid JSON payload.") from exc
+
+        if data.get("error"):
+            raise ValueError(f"TOC generation model returned error: {data['error']}")
+
+        content = (
+            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if isinstance(data.get("choices"), list)
+            else None
+        )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("TOC generation model returned empty content.")
+        return content
+
     def _build_generation_prompt(self, *, requirement: RequirementDocument, source_lines: list[str]) -> str:
-        subsystem_lines = [
-            f"- {subsystem.name}: {subsystem.description}"
-            for subsystem in requirement.scope.subsystems
-            if subsystem.name.strip()
-        ]
+        bidding_requirement_lines = self._bidding_requirement_lines(requirement)
         standard_lines = [f"- {item}" for item in requirement.constraints.standards if str(item).strip()]
         acceptance_lines = [f"- {item}" for item in requirement.constraints.acceptance if str(item).strip()]
 
         instructions = [
-            "任务：根据以下 requirement 解析结果，生成工程实施文档目录树。",
+            "任务：通读以下 requirement 全文解析内容，提炼其中的招标要求、实施范围、技术约束、验收要求和服务要求，生成工程实施文档目录树。",
             "硬性要求：",
-            "1. 必须分析下方提供的全文解析内容；禁止仅依据项目名称猜测目录。",
+            "1. 必须分析下方提供的全文解析内容，并从全文中提炼招标要求后再组织目录；禁止仅依据项目名称猜测目录。",
             "2. 禁止使用任何预设目录模板、通用套话章节或固定章节骨架。",
             "3. 目录结构必须完全由上传文档的内容决定，可在不改变原意的前提下做工程化重组。",
-            "4. 所有已识别的子系统、实施范围、约束、验收要点都必须在目录中得到覆盖。",
-            "5. 目录层级优先使用一级、二级、三级；只有当三级主题仍然过宽、无法作为独立生成单元时，才允许拆成四级。",
-            "6. 不要输出与原文无关的系统、设备、流程、标准或场景。",
-            "7. 根节点标题可以工程化润色，但不能脱离项目实际内容。",
-            "8. title 字段只保留章节语义名称，不要包含原文编号、章次、篇次或条次，例如不要写“第一章”“第十章”“1.10”“3.2.1”。",
-            "9. 不要把 requirement 原文中的目录号、条款号、附件号复制进 title，例如不要写“1.8.5 售后服务团队”这种标题。",
-            "10. 编号由系统生成并写入 node_id，模型不要把编号写进 title。",
+            "4. 用户可见目录层级优先使用一级、二级、三级；只有当三级主题仍然过宽、无法作为独立生成单元时，才允许拆成四级。",
+            "5. 不要输出与原文无关的系统、设备、流程、标准或场景。",
+            "6. root_title 是整份文档的总标题，不参与用户可见章节编号；chapters 数组中的节点才是用户可见一级目录。",
+            "7. title 字段只保留章节语义名称，不要包含原文编号、章次、篇次或条次，例如不要写“第一章”“第十章”“1.10”“3.2.1”。",
+            "8. 不要把 requirement 原文中的目录号、条款号、附件号复制进 title，例如不要写“1.8.5 售后服务团队”这种标题。",
+            "9. 编号由系统生成并写入 node_id，模型不要把编号写进 title。",
+            "10. 最小生成单元只能落在用户可见三级或四级标题，禁止用户可见一、二级标题直接作为生成单元。",
             "11. 如果三级节点已经足够明确、可以独立展开写作，就不要继续拆成四级。",
             "12. 只输出 JSON，不要输出解释、前言、Markdown 或注释。",
             "",
@@ -153,22 +256,27 @@ class TOCGeneratorAgent:
             '      "title": "二级标题",',
             '      "children": [',
             '        {',
-            '          "title": "三级标题",',
+            '          "title": "二级标题下的三级标题",',
             '          "children": [',
-            '            {"title": "四级标题", "children": []}',
+            '            {',
+            '              "title": "生成单元三级标题",',
+            '              "children": [',
+            '                {"title": "生成单元四级标题", "children": []}',
+            "              ]",
+            "            }",
             "          ]",
             "        }",
             "      ]",
             "    }",
             "  ]",
             '}',
-            "约束：二级标题不能是叶子节点；叶子节点只能出现在三级或四级；禁止超过四级。",
+            "约束：用户可见一级、二级标题都不能是生成叶子；叶子节点只能出现在用户可见三级或四级；禁止超过用户可见四级。",
             "",
             f"项目名称：{requirement.project.name or '未提取'}",
             f"范围概述：{requirement.scope.overview or '未提取'}",
             "",
-            "已识别子系统：",
-            *(subsystem_lines or ["- 无明确子系统，需从全文自行归纳。"]),
+            "已提取招标要求（必须优先覆盖，来源于全文分段解析）：",
+            *(bidding_requirement_lines or ["- 无明确提取项，需从全文解析内容自行核对。"]),
             "",
             "已识别标准约束：",
             *(standard_lines or ["- 无"]),
@@ -177,6 +285,69 @@ class TOCGeneratorAgent:
             *(acceptance_lines or ["- 无"]),
             "",
             "全文解析内容（必须通读并据此生成目录）：",
+            *source_lines,
+        ]
+        return "\n".join(instructions)
+
+    def _build_outline_guided_prompt(
+        self,
+        *,
+        requirement: RequirementDocument,
+        source_lines: list[str],
+        outline_guidance: TOCDocument,
+    ) -> str:
+        bidding_requirement_lines = self._bidding_requirement_lines(requirement)
+        outline_lines = self._outline_guidance_lines(outline_guidance)
+        instructions = [
+            "任务：通读以下 requirement 全文解析内容，提炼其中所有招标要求，并结合用户上传的目录树意图，重新生成一份最终目录树。",
+            "硬性要求：",
+            "1. 必须先通读全文 requirement 内容，提炼其中所有与招标范围、技术要求、实施要求、验收要求、培训与售后要求相关的章节主题。",
+            "2. 用户上传的目录树只能作为结构意图和组织偏好参考，不能直接照抄成最终输出；必须经过全文 requirement 校核、重组和补全。",
+            "3. 如果用户目录树遗漏了全文中的关键招标要求，必须补齐；如果用户目录树包含与全文不符或缺乏依据的标题，必须删除、合并或改写。",
+            "4. 禁止使用任何预设目录模板、固定章节骨架或通用套话目录。",
+            "5. 最终目录必须同时满足：来源于全文 requirement、尽量尊重用户目录树的组织意图、覆盖全文所有关键招标要求。",
+            "6. 用户可见目录层级优先使用一级、二级、三级；只有当三级主题仍然过宽、无法作为独立生成单元时，才允许拆成四级。",
+            "7. title 字段只保留章节语义名称，不要包含原文编号、章次、篇次或条次，例如不要写“第一章”“第十章”“1.10”“3.2.1”。",
+            "8. 不要把用户上传目录树中的编号、原文条款号、附件号复制进 title，例如不要写“1.8.5 售后服务团队”。",
+            "9. 编号由系统生成并写入 node_id，模型不要把编号写进 title。",
+            "10. 最小生成单元只能落在用户可见三级或四级标题，禁止用户可见一、二级标题直接作为生成单元。",
+            "11. 如果三级节点已经足够明确、可以独立展开写作，就不要继续拆成四级。",
+            "12. 只输出 JSON，不要输出解释、前言、Markdown 或注释。",
+            "",
+            "输出 JSON 格式：",
+            '{',
+            '  "root_title": "一级标题",',
+            '  "chapters": [',
+            '    {',
+            '      "title": "二级标题",',
+            '      "children": [',
+            '        {',
+            '          "title": "二级标题下的三级标题",',
+            '          "children": [',
+            '            {',
+            '              "title": "生成单元三级标题",',
+            '              "children": [',
+            '                {"title": "生成单元四级标题", "children": []}',
+            "              ]",
+            "            }",
+            "          ]",
+            "        }",
+            "      ]",
+            "    }",
+            "  ]",
+            '}',
+            "约束：用户可见一级、二级标题都不能是生成叶子；叶子节点只能出现在用户可见三级或四级；禁止超过用户可见四级。",
+            "",
+            f"项目名称：{requirement.project.name or '未提取'}",
+            f"范围概述：{requirement.scope.overview or '未提取'}",
+            "",
+            "已提取招标要求（必须优先覆盖，来源于全文分段解析）：",
+            *(bidding_requirement_lines or ["- 无明确提取项，需从全文 requirement 自行提炼。"]),
+            "",
+            "用户上传目录树（仅作为结构意图参考，最终输出必须由全文 requirement 决定）：",
+            *(outline_lines or ["- 未提供有效的目录树结构。"]),
+            "",
+            "全文解析内容（必须通读并据此重建目录）：",
             *source_lines,
         ]
         return "\n".join(instructions)
@@ -206,9 +377,11 @@ class TOCGeneratorAgent:
         self,
         *,
         requirement: RequirementDocument,
+        provider: str,
         model_name: str,
         api_key: str,
         initial_content: str,
+        outline_guidance: TOCDocument | None = None,
     ) -> _DraftNode:
         content = initial_content
         last_error: ValueError | None = None
@@ -223,8 +396,14 @@ class TOCGeneratorAgent:
                     requirement=requirement,
                     invalid_output=content,
                     validation_error=str(exc),
+                    outline_guidance=outline_guidance,
                 )
-                content = self._request_minimax_completion(
+                request_fn = (
+                    self._request_minimax_completion
+                    if provider == "minimax"
+                    else self._request_whatai_completion
+                )
+                content = request_fn(
                     api_key=api_key,
                     model_name=model_name,
                     prompt=repair_prompt,
@@ -254,8 +433,11 @@ class TOCGeneratorAgent:
         requirement: RequirementDocument,
         invalid_output: str,
         validation_error: str,
+        outline_guidance: TOCDocument | None = None,
     ) -> str:
         source_lines = self._source_lines(requirement)
+        bidding_requirement_lines = self._bidding_requirement_lines(requirement)
+        outline_lines = self._outline_guidance_lines(outline_guidance) if outline_guidance is not None else []
         instructions = [
             "任务：修正下面这个不合规的目录树 JSON。",
             "修正原因：",
@@ -263,17 +445,25 @@ class TOCGeneratorAgent:
             "",
             "修正要求：",
             "1. 保留原目录的业务语义和主题覆盖，不要改成固定模板。",
-            "2. 最小生成单元必须是三级或四级标题。",
-            "3. 二级标题不能直接作为生成单元，若当前二级标题过浅，必须拆成合适的三级标题。",
-            "4. 目录层级优先使用一级、二级、三级；只有三级仍然过宽时，才允许四级。",
-            "5. title 只保留语义名称，不要带编号、章次、条款号。",
-            "6. 只输出修正后的 JSON，不要输出解释。",
+            "1.1 如果存在用户上传目录树，需在全文 requirement 约束下尽量保留其有效结构意图，但不能照抄无依据标题。",
+            "2. root_title 只是整份文档标题，不参与用户可见层级编号。",
+            "3. 最小生成单元必须是用户可见三级或四级标题。",
+            "4. 用户可见一级、二级标题不能直接作为生成单元，若当前层级过浅，必须继续拆成合适的三级标题。",
+            "5. 目录层级优先使用一级、二级、三级；只有三级仍然过宽时，才允许四级。",
+            "6. title 只保留语义名称，不要带编号、章次、条款号。",
+            "7. 只输出修正后的 JSON，不要输出解释。",
             "",
             "项目名称：",
             requirement.project.name or "未提取",
             "",
             "范围概述：",
             requirement.scope.overview or "未提取",
+            "",
+            "已提取招标要求摘要：",
+            *(bidding_requirement_lines[:160] or ["- 无"]),
+            "",
+            "用户上传目录树参考：",
+            *(outline_lines or ["- 无"]),
             "",
             "全文解析内容摘要（用于保持覆盖关系）：",
             *source_lines[:120],
@@ -306,7 +496,7 @@ class TOCGeneratorAgent:
             raw_children = item.get("nodes")
         child_items = raw_children or []
 
-        if depth < 4:
+        if depth < 5:
             children = self._parse_draft_nodes(child_items, depth=depth + 1)
             return [_DraftNode(title=title, children=children)]
 
@@ -348,27 +538,27 @@ class TOCGeneratorAgent:
             nonlocal generation_unit_count
             if depth == 1 and not node.children:
                 raise ValueError("TOC root must contain child chapters.")
-            if depth == 2 and not node.children:
-                raise ValueError("TOC second-level chapters cannot be generation-unit leaves.")
-            if depth >= 4 and node.children:
-                raise ValueError("TOC cannot contain children below level 4.")
+            if depth in {2, 3} and not node.children:
+                raise ValueError("TOC leaves must be visible level 3 or level 4.")
+            if depth >= 5 and node.children:
+                raise ValueError("TOC cannot contain visible children below level 4.")
             if not node.children:
-                if depth < 3:
-                    raise ValueError("TOC leaves must be level 3 or level 4.")
+                if depth < 4:
+                    raise ValueError("TOC leaves must be visible level 3 or level 4.")
                 generation_unit_count += 1
             for child in node.children:
                 walk(child, depth + 1)
 
         walk(root, 1)
         if generation_unit_count == 0:
-            raise ValueError("TOC generation model did not return any level 3 or level 4 generation units.")
+            raise ValueError("TOC generation model did not return any visible level 3 or level 4 generation units.")
 
     def _materialize_tree(self, *, draft_root: _DraftNode, requirement: RequirementDocument) -> TOCNode:
         root_refs = self._match_source_refs(requirement, [draft_root.title], limit=10)
         root = TOCNode(
             node_uid="uid_root_001",
-            node_id="1",
-            level=1,
+            node_id="",
+            level=0,
             title=draft_root.title,
             is_generation_unit=False,
             source_refs=root_refs,
@@ -410,7 +600,7 @@ class TOCGeneratorAgent:
             )
             node = TOCNode(
                 node_uid=self._stable_uid(f"l{level}", seed),
-                node_id=f"{parent.node_id}.{index}",
+                node_id=str(index) if not parent.node_id else f"{parent.node_id}.{index}",
                 level=level,
                 title=draft.title,
                 is_generation_unit=not draft.children,
@@ -428,36 +618,6 @@ class TOCGeneratorAgent:
                 )
             siblings.append(node)
         return siblings
-
-    def _validate_subsystem_coverage(self, *, requirement: RequirementDocument, tree: list[TOCNode]) -> None:
-        subsystem_names = [
-            self._coverage_key(subsystem.name)
-            for subsystem in requirement.scope.subsystems
-            if self._is_meaningful_subsystem_name(subsystem.name)
-        ]
-        if not subsystem_names:
-            return
-
-        toc_text = self._coverage_key("\n".join(self._flatten_titles(tree)))
-        missing = [
-            name
-            for name in subsystem_names
-            if name and name not in toc_text
-        ]
-        max_missing_without_error = 1 if len(subsystem_names) <= 2 else max(1, len(subsystem_names) // 3)
-        if len(missing) > max_missing_without_error:
-            missing_preview = "、".join(missing[:5])
-            raise ValueError(
-                "TOC generation omitted parsed subsystem coverage. "
-                f"Missing subsystem titles: {missing_preview}"
-            )
-
-    def _flatten_titles(self, nodes: list[TOCNode]) -> list[str]:
-        titles: list[str] = []
-        for node in nodes:
-            titles.append(node.title)
-            titles.extend(self._flatten_titles(node.children))
-        return titles
 
     def _match_source_refs(
         self,
@@ -491,6 +651,30 @@ class TOCGeneratorAgent:
             key=lambda pair: self._line_no_from_source_ref(pair[0]),
         ):
             lines.append(f"{source_ref} [{item.paragraph_id}] {item.text}")
+        return lines
+
+    def _bidding_requirement_lines(self, requirement: RequirementDocument) -> list[str]:
+        return [
+            f"- {item.source_ref or 'unknown'} [{item.type}] {item.value}"
+            for item in requirement.bidding_requirements
+            if item.value.strip()
+        ]
+
+    def _outline_guidance_lines(self, outline_guidance: TOCDocument | None) -> list[str]:
+        if outline_guidance is None:
+            return []
+
+        lines: list[str] = []
+
+        def walk(node: TOCNode) -> None:
+            if node.level > 0:
+                prefix = node.node_id or f"L{node.level}"
+                lines.append(f"- {prefix} {node.title}")
+            for child in node.children:
+                walk(child)
+
+        for root in outline_guidance.tree:
+            walk(root)
         return lines
 
     def _clean_title(self, title: str) -> str:
@@ -535,38 +719,6 @@ class TOCGeneratorAgent:
             deduplicated.append(title)
         return deduplicated
 
-    def _coverage_key(self, text: str) -> str:
-        cleaned = self._normalize_token(text)
-        for suffix in ("子系统", "系统", "平台", "模块", "装置"):
-            normalized_suffix = self._normalize_token(suffix)
-            if cleaned.endswith(normalized_suffix) and len(cleaned) > len(normalized_suffix):
-                cleaned = cleaned[: -len(normalized_suffix)]
-                break
-        return cleaned
-
-    def _is_meaningful_subsystem_name(self, text: str) -> bool:
-        cleaned = self._clean_title(text)
-        if len(cleaned) < 3:
-            return False
-        keywords = (
-            "系统",
-            "子系统",
-            "平台",
-            "模块",
-            "装置",
-            "控制",
-            "监控",
-            "网络",
-            "数据库",
-            "PLC",
-            "SCADA",
-            "配电",
-            "机柜",
-            "交换机",
-            "站",
-        )
-        return any(keyword.lower() in cleaned.lower() for keyword in keywords)
-
     def _line_no_from_source_ref(self, source_ref: str) -> int:
         match = self._LINE_NO_PATTERN.search(source_ref)
         if match is None:
@@ -579,7 +731,7 @@ class TOCGeneratorAgent:
 
     def _generation_constraints(self) -> dict[str, Any]:
         return {
-            "min_words": 1800,
-            "recommended_words": [1800, 2200],
+            "min_words": 1,
+            "recommended_words": [],
             "images": [2, 3],
         }

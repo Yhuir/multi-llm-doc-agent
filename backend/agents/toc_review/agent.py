@@ -1,4 +1,4 @@
-"""Rule-based TOC review agent that applies user feedback to the tree."""
+"""Requirement-aware TOC review agent that applies model-planned edits to the tree."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-from backend.models.schemas import TOCDocument, TOCNode
+from backend.models.schemas import RequirementDocument, TOCDocument, TOCNode
 
 
 @dataclass(slots=True)
@@ -25,12 +25,9 @@ class TOCReviewChatAgent:
     """Apply common TOC review actions while preserving stable node_uid values."""
 
     _MINIMAX_TEXT_ENDPOINT = "https://api.minimaxi.com/v1/text/chatcompletion_v2"
-    _SPLIT_PATTERN = re.compile(r"[；;\n]+|(?:并且|同时|然后)")
-    _QUOTE_PATTERN = re.compile(r"[“\"'‘](.+?)[”\"'’]")
-    _MOVE_PATTERN = re.compile(r"(移动到|移到|放到|调整到|挪到)")
-    _RENAME_KEYWORDS = ("改为", "改成", "修改为", "调整为", "命名为", "改名为", "更名为")
-    _ADD_KEYWORDS = ("新增", "增加", "添加", "补充")
-    _REMOVE_KEYWORDS = ("删除", "移除", "去掉", "删掉")
+    _WHATAI_TEXT_ENDPOINT = "https://api.whatai.cc/v1/chat/completions"
+    _JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", flags=re.S)
+    _LINE_NO_PATTERN = re.compile(r"#L(\d+)$")
     _ORDINAL_MAP = {
         "一": 1,
         "二": 2,
@@ -62,111 +59,28 @@ class TOCReviewChatAgent:
         *,
         toc_doc: TOCDocument,
         feedback: str,
+        requirement: RequirementDocument | None = None,
         review_config: dict[str, Any] | None = None,
     ) -> TOCDocument:
+        if requirement is None:
+            raise ValueError("TOC review requires requirement.json so the model can read the full document.")
         updated = copy.deepcopy(toc_doc)
-        changed = False
-        explicit_keep_targets = self._extract_keep_only_targets_from_feedback(feedback)
-        if explicit_keep_targets:
-            changed = self._apply_keep_only_action(
-                updated.tree,
-                targets=explicit_keep_targets,
-                include_descendants=False,
+        actions = self._plan_actions_with_model(
+            toc_doc=toc_doc,
+            feedback=feedback,
+            requirement=requirement,
+            review_config=review_config or {},
+        )
+        if not actions:
+            raise ValueError(
+                "未根据审阅意见应用任何目录修改，请更具体地指出要修改的章节标题、位置或新增内容。"
             )
-        else:
-            actions = self._plan_actions_with_model(
-                toc_doc=toc_doc,
-                feedback=feedback,
-                review_config=review_config or {},
-            )
-            actions = self._normalize_model_actions(actions, explicit_keep_targets)
-            if actions:
-                changed = self._apply_planned_actions(updated.tree, actions)
+        changed = self._apply_planned_actions(updated.tree, actions)
 
         if not changed:
-            if self._apply_keep_only_from_feedback(updated.tree, feedback):
-                changed = True
-
-        if not changed:
-            clauses = [item.strip() for item in self._SPLIT_PATTERN.split(feedback) if item.strip()]
-            for clause in clauses:
-                if self._apply_move(updated.tree, clause):
-                    changed = True
-                    continue
-                if self._apply_rename(updated.tree, clause):
-                    changed = True
-                    continue
-                if self._apply_add(updated.tree, clause):
-                    changed = True
-                    continue
-                if self._apply_remove(updated.tree, clause):
-                    changed = True
-                    continue
-                if self._apply_soft_rename(updated.tree, clause):
-                    changed = True
-
-        if not changed:
-            return updated
+            raise ValueError("未根据审阅意见应用任何目录修改，请更具体地指出要修改的章节标题、位置或新增内容。")
         self._normalize_review_tree(updated.tree)
         return updated
-
-    def _normalize_model_actions(
-        self,
-        actions: list[dict[str, Any]],
-        explicit_keep_targets: list[str],
-    ) -> list[dict[str, Any]]:
-        if not explicit_keep_targets:
-            return actions
-        normalized: list[dict[str, Any]] = []
-        keep_overridden = False
-        for action in actions:
-            action_type = str(action.get("type") or "").strip().lower()
-            if action_type == "keep_only" and not keep_overridden:
-                patched = dict(action)
-                patched["targets"] = explicit_keep_targets
-                patched["include_descendants"] = False
-                normalized.append(patched)
-                keep_overridden = True
-            else:
-                normalized.append(action)
-        if not keep_overridden and explicit_keep_targets:
-            normalized.append(
-                {
-                    "type": "keep_only",
-                    "targets": explicit_keep_targets,
-                    "include_descendants": False,
-                }
-            )
-        return normalized
-
-    def _apply_keep_only_from_feedback(self, tree: list[TOCNode], feedback: str) -> bool:
-        targets = self._extract_keep_only_targets_from_feedback(feedback)
-        if not targets:
-            return False
-        return self._apply_keep_only_action(tree, targets=targets, include_descendants=False)
-
-    def _extract_keep_only_targets_from_feedback(self, feedback: str) -> list[str]:
-        compact = re.sub(r"\s+", "", feedback)
-        if "仅保留" not in compact and "只保留" not in compact:
-            return []
-        if "删除其他" not in compact and "其余删除" not in compact and "其他都删除" not in compact:
-            return []
-
-        targets: list[str] = []
-        for raw_line in feedback.splitlines():
-            line = raw_line.strip().strip("“”\"'‘’")
-            if not line:
-                continue
-            line = re.sub(r"\s+生成单元$", "", line)
-            matched = re.match(r"^(?P<id>\d+(?:\.\d+)*)\s+(?P<title>.+)$", line)
-            if matched is None:
-                continue
-            title = matched.group("title").strip()
-            if title:
-                targets.append(title)
-            else:
-                targets.append(matched.group("id"))
-        return targets
 
     def _apply_planned_actions(self, tree: list[TOCNode], actions: list[dict[str, Any]]) -> bool:
         changed = False
@@ -354,19 +268,94 @@ class TOCReviewChatAgent:
         *,
         toc_doc: TOCDocument,
         feedback: str,
+        requirement: RequirementDocument,
         review_config: dict[str, Any],
     ) -> list[dict[str, Any]]:
         provider = str(review_config.get("text_provider") or "").strip().lower()
         api_key = str(review_config.get("text_api_key") or "").strip()
         model_name = str(review_config.get("text_model_name") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
-        if provider != "minimax" or not api_key:
-            return []
+        if provider not in {"minimax", "whatai", "google"}:
+            raise ValueError(
+                "TOC review requires a supported text model provider. "
+                f"Current provider: {provider or 'unset'}."
+            )
+        if not api_key:
+            raise ValueError("TOC review requires `text_api_key`. Please configure the text model first.")
 
-        prompt = self._build_model_prompt(toc_doc=toc_doc, feedback=feedback)
+        prompt = self._build_model_prompt(
+            toc_doc=toc_doc,
+            feedback=feedback,
+            requirement=requirement,
+        )
+        request_fn = (
+            self._request_minimax_completion
+            if provider == "minimax"
+            else self._request_whatai_completion
+        )
+        content = request_fn(
+            api_key=api_key,
+            model_name=model_name,
+            prompt=prompt,
+        )
+        return self._extract_actions_from_model_text(content)
+
+    def _build_model_prompt(
+        self,
+        *,
+        toc_doc: TOCDocument,
+        feedback: str,
+        requirement: RequirementDocument,
+    ) -> str:
+        toc_lines = self._render_toc_lines(toc_doc.tree)
+        source_lines = self._source_lines(requirement)
+        bidding_requirement_lines = self._bidding_requirement_lines(requirement)
+        instructions = [
+            "你是目录审阅动作规划器。",
+            "任务：先通读整份上传文档的全文解析内容，提炼其中的招标要求、实施范围、技术标准、验收要求和服务要求，再根据用户意见，把当前 TOC 转成结构化编辑动作。",
+            "只允许输出 JSON，不要输出解释文字。",
+            '输出格式：{"actions":[...]}',
+            "允许的动作类型：rename, add_child, add_before, add_after, remove, move_before, move_after, move_under, keep_only。",
+            'rename: {"type":"rename","target":"现有章节标题或编号","new_title":"新标题"}',
+            'add_child: {"type":"add_child","parent":"现有章节标题或编号","title":"新增标题"}',
+            'add_before/add_after: {"type":"add_before","reference":"现有章节标题或编号","title":"新增标题"}',
+            'remove: {"type":"remove","target":"现有章节标题或编号"}',
+            'move_before/move_after: {"type":"move_after","target":"要移动的标题","reference":"参考标题"}',
+            'move_under: {"type":"move_under","target":"要移动的标题","parent":"新的父标题"}',
+            'keep_only: {"type":"keep_only","targets":["要保留的标题或编号", "..."],"include_descendants":false}',
+            "当用户表达“仅保留以下目录，删除其他”“只保留这些章节”时，优先使用 keep_only。",
+            "动作规划必须以全文 requirement 为准，不能只看当前 TOC 表面文字。",
+            "若用户要求新增、合并、拆分、调整顺序，必须先核对全文中是否存在对应的招标要求与业务主题。",
+            "不要重写整棵 TOC，不要发明大量新章节，只提取用户明确要求且能从全文 requirement 支撑的修改。",
+            "如果意见不明确、全文中缺乏依据，或无法从 TOC 中唯一定位，请返回空数组。",
+            "",
+            f"项目名称：{requirement.project.name or '未提取'}",
+            f"范围概述：{requirement.scope.overview or '未提取'}",
+            "",
+            "已提取招标要求（必须优先作为目录审阅依据）：",
+            *(bidding_requirement_lines or ["- 无明确提取项，需从全文解析内容自行核对。"]),
+            "",
+            "当前 TOC：",
+            *toc_lines,
+            "",
+            "全文解析内容（必须通读）：",
+            *source_lines,
+            "",
+            f"用户意见：{feedback}",
+        ]
+        return "\n".join(instructions)
+
+    def _request_minimax_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
         payload = {
             "model": model_name,
             "messages": [
-                {"role": "system", "name": "TOC Review Planner"},
+                {
+                    "role": "system",
+                    "name": "TOC Review Planner",
+                    "content": (
+                        "你是工程实施文档目录审阅规划器。"
+                        "必须基于用户上传文档的全文解析结果规划目录调整动作，禁止脱离全文擅自改树。"
+                    ),
+                },
                 {"role": "user", "name": "user", "content": prompt},
             ],
             "temperature": 0.2,
@@ -382,19 +371,24 @@ class TOCReviewChatAgent:
         )
 
         try:
-            with urlrequest.urlopen(req, timeout=30) as response:
+            with urlrequest.urlopen(req, timeout=240) as response:
                 body = response.read().decode("utf-8")
-        except (urlerror.URLError, TimeoutError, ValueError):
-            return []
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"TOC review model request failed: HTTP {exc.code} {detail}") from exc
+        except (urlerror.URLError, TimeoutError) as exc:
+            raise ValueError(f"TOC review model request failed: {exc}") from exc
 
         try:
             data = json.loads(body)
-        except json.JSONDecodeError:
-            return []
+        except json.JSONDecodeError as exc:
+            raise ValueError("TOC review model returned invalid JSON payload.") from exc
 
         base_resp = data.get("base_resp") or {}
         if base_resp.get("status_code") not in (None, 0):
-            return []
+            raise ValueError(
+                f"TOC review model returned error: {base_resp.get('status_msg') or base_resp.get('status_code')}"
+            )
 
         content = (
             ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
@@ -402,34 +396,59 @@ class TOCReviewChatAgent:
             else None
         )
         if not isinstance(content, str) or not content.strip():
-            return []
-        return self._extract_actions_from_model_text(content)
+            raise ValueError("TOC review model returned empty content.")
+        return content
 
-    def _build_model_prompt(self, *, toc_doc: TOCDocument, feedback: str) -> str:
-        toc_lines = self._render_toc_lines(toc_doc.tree)
-        instructions = [
-            "你是目录审阅动作规划器。",
-            "任务：根据用户的目录修改意见，把当前 TOC 转成结构化编辑动作。",
-            "只允许输出 JSON，不要输出解释文字。",
-            '输出格式：{"actions":[...]}',
-            "允许的动作类型：rename, add_child, add_before, add_after, remove, move_before, move_after, move_under, keep_only。",
-            'rename: {"type":"rename","target":"现有章节标题或编号","new_title":"新标题"}',
-            'add_child: {"type":"add_child","parent":"现有章节标题或编号","title":"新增标题"}',
-            'add_before/add_after: {"type":"add_before","reference":"现有章节标题或编号","title":"新增标题"}',
-            'remove: {"type":"remove","target":"现有章节标题或编号"}',
-            'move_before/move_after: {"type":"move_after","target":"要移动的标题","reference":"参考标题"}',
-            'move_under: {"type":"move_under","target":"要移动的标题","parent":"新的父标题"}',
-            'keep_only: {"type":"keep_only","targets":["要保留的标题或编号", "..."],"include_descendants":false}',
-            "当用户表达“仅保留以下目录，删除其他”“只保留这些章节”时，优先使用 keep_only。",
-            "如果意见不明确或无法从 TOC 中唯一定位，请返回空数组。",
-            "不要重写整棵 TOC，不要发明大量新章节，只提取用户明确要求的修改。",
-            "",
-            "当前 TOC：",
-            *toc_lines,
-            "",
-            f"用户意见：{feedback}",
-        ]
-        return "\n".join(instructions)
+    def _request_whatai_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是工程实施文档目录审阅规划器。"
+                        "必须基于用户上传文档的全文解析结果规划目录调整动作，禁止脱离全文擅自改树。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+        }
+        req = urlrequest.Request(
+            self._WHATAI_TEXT_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlrequest.urlopen(req, timeout=240) as response:
+                body = response.read().decode("utf-8")
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"TOC review model request failed: HTTP {exc.code} {detail}") from exc
+        except (urlerror.URLError, TimeoutError) as exc:
+            raise ValueError(f"TOC review model request failed: {exc}") from exc
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("TOC review model returned invalid JSON payload.") from exc
+
+        if data.get("error"):
+            raise ValueError(f"TOC review model returned error: {data['error']}")
+
+        content = (
+            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if isinstance(data.get("choices"), list)
+            else None
+        )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("TOC review model returned empty content.")
+        return content
 
     def _render_toc_lines(self, tree: list[TOCNode]) -> list[str]:
         lines: list[str] = []
@@ -445,7 +464,7 @@ class TOCReviewChatAgent:
 
     def _extract_actions_from_model_text(self, content: str) -> list[dict[str, Any]]:
         candidates = []
-        fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", content, flags=re.S)
+        fenced = self._JSON_BLOCK_PATTERN.findall(content)
         candidates.extend(fenced)
         first = content.find("{")
         last = content.rfind("}")
@@ -460,6 +479,28 @@ class TOCReviewChatAgent:
             if isinstance(actions, list):
                 return [item for item in actions if isinstance(item, dict)]
         return []
+
+    def _source_lines(self, requirement: RequirementDocument) -> list[str]:
+        lines: list[str] = []
+        for source_ref, item in sorted(
+            requirement.source_index.items(),
+            key=lambda pair: self._line_no_from_source_ref(pair[0]),
+        ):
+            lines.append(f"{source_ref} [{item.paragraph_id}] {item.text}")
+        return lines
+
+    def _bidding_requirement_lines(self, requirement: RequirementDocument) -> list[str]:
+        return [
+            f"- {item.source_ref or 'unknown'} [{item.type}] {item.value}"
+            for item in requirement.bidding_requirements
+            if item.value.strip()
+        ]
+
+    def _line_no_from_source_ref(self, source_ref: str) -> int:
+        match = self._LINE_NO_PATTERN.search(source_ref)
+        if match is None:
+            return 0
+        return int(match.group(1))
 
     def _find_ref_by_uid(self, tree: list[TOCNode], node_uid: str) -> _NodeRef | None:
         for ref in self._iter_refs(tree):
@@ -486,196 +527,6 @@ class TOCReviewChatAgent:
             else:
                 changed = True
         return changed, kept_children
-
-    def _apply_rename(self, tree: list[TOCNode], clause: str) -> bool:
-        if not any(token in clause for token in self._RENAME_KEYWORDS):
-            return False
-
-        old_query = ""
-        new_title = ""
-        quoted = self._quoted_strings(clause)
-        if len(quoted) >= 2:
-            old_query, new_title = quoted[0], quoted[1]
-        else:
-            keyword = next((item for item in self._RENAME_KEYWORDS if item in clause), None)
-            if keyword is None:
-                return False
-            matched = re.search(
-                rf"(?:把|将)?(?P<old>.+?){re.escape(keyword)}(?P<new>.+)$",
-                clause,
-            )
-            if matched is None:
-                return False
-            old_query = matched.group("old")
-            new_title = matched.group("new")
-
-        target_ref = self._match_node(tree, old_query)
-        cleaned_title = self._cleanup_feedback_title(new_title)
-        if target_ref is None or not cleaned_title:
-            return False
-        if self._normalize_title(cleaned_title) == self._normalize_title(target_ref.node.title):
-            return False
-
-        target_ref.node.title = cleaned_title
-        return True
-
-    def _apply_add(self, tree: list[TOCNode], clause: str) -> bool:
-        if not any(token in clause for token in self._ADD_KEYWORDS):
-            return False
-
-        quoted = self._quoted_strings(clause)
-        target_ref: _NodeRef | None = None
-        new_title = ""
-        mode = "child"
-
-        if len(quoted) >= 2:
-            if re.match(r"^\s*(?:新增|增加|添加|补充)", clause):
-                target_ref = self._match_node(tree, quoted[1])
-                new_title = quoted[0]
-            else:
-                target_ref = self._match_node(tree, quoted[0])
-                new_title = quoted[1]
-        else:
-            matched = re.search(
-                r"在(?P<target>.+?)(?P<pos>下|下面|前|前面|后|后面)(?:新增|增加|添加|补充)(?P<title>.+)$",
-                clause,
-            )
-            if matched is not None:
-                target_ref = self._match_node(tree, matched.group("target"))
-                new_title = matched.group("title")
-                mode = self._position_mode(matched.group("pos"))
-            else:
-                matched = re.search(
-                    r"(?:新增|增加|添加|补充)(?P<title>.+?)到(?P<target>.+?)(?P<pos>下|下面|前|前面|后|后面)$",
-                    clause,
-                )
-                if matched is not None:
-                    target_ref = self._match_node(tree, matched.group("target"))
-                    new_title = matched.group("title")
-                    mode = self._position_mode(matched.group("pos"))
-        if target_ref is None and len(quoted) >= 2:
-            mode = self._infer_add_mode(clause)
-            target_ref = self._match_node(tree, quoted[0])
-
-        if target_ref is None:
-            return False
-
-        if "前" in clause:
-            mode = "before"
-        elif "后" in clause:
-            mode = "after"
-        elif "下" in clause:
-            mode = "child"
-
-        cleaned_title = self._cleanup_feedback_title(new_title)
-        if not cleaned_title:
-            return False
-
-        if mode == "child":
-            parent = target_ref.node
-            prototype = parent.children[0] if parent.children else None
-            if parent.is_generation_unit:
-                parent.is_generation_unit = False
-                parent.constraints = None
-            new_node = self._build_new_node(parent=parent, title=cleaned_title, prototype=prototype)
-            parent.children.append(new_node)
-            return True
-
-        parent = target_ref.parent
-        if parent is None:
-            return False
-        new_node = self._build_new_node(parent=parent, title=cleaned_title, prototype=target_ref.node)
-        insert_index = target_ref.index if mode == "before" else target_ref.index + 1
-        parent.children.insert(insert_index, new_node)
-        return True
-
-    def _apply_remove(self, tree: list[TOCNode], clause: str) -> bool:
-        if not any(token in clause for token in self._REMOVE_KEYWORDS):
-            return False
-
-        quoted = self._quoted_strings(clause)
-        query = quoted[0] if quoted else clause
-        target_ref = self._match_node(tree, query)
-        if target_ref is None or target_ref.parent is None:
-            return False
-
-        target_ref.parent.children.pop(target_ref.index)
-        self._normalize_parent_after_child_change(target_ref.parent)
-        return True
-
-    def _apply_move(self, tree: list[TOCNode], clause: str) -> bool:
-        if self._MOVE_PATTERN.search(clause) is None:
-            return False
-
-        quoted = self._quoted_strings(clause)
-        source_ref: _NodeRef | None = None
-        target_ref: _NodeRef | None = None
-
-        if len(quoted) >= 2:
-            source_ref = self._match_node(tree, quoted[0])
-            target_ref = self._match_node(tree, quoted[1], exclude_uid=source_ref.node.node_uid if source_ref else None)
-        else:
-            matched = re.search(
-                r"(?:把|将)(?P<src>.+?)(?:移动到|移到|放到|调整到|挪到)(?P<target>.+?)(?P<pos>前面|前|后面|后|下面|下级|之下)$",
-                clause,
-            )
-            if matched is None:
-                return False
-            source_ref = self._match_node(tree, matched.group("src"))
-            target_ref = self._match_node(
-                tree,
-                matched.group("target"),
-                exclude_uid=source_ref.node.node_uid if source_ref else None,
-            )
-
-        if source_ref is None or target_ref is None or source_ref.parent is None:
-            return False
-
-        position = "after"
-        if any(token in clause for token in ("前面", "前")):
-            position = "before"
-        elif any(token in clause for token in ("下面", "下级", "之下")):
-            position = "child"
-
-        if position == "child" and self._contains_uid(source_ref.node, target_ref.node.node_uid):
-            return False
-
-        moving_node = source_ref.parent.children.pop(source_ref.index)
-        self._normalize_parent_after_child_change(source_ref.parent)
-
-        if position == "child":
-            target_ref = self._match_node(tree, target_ref.node.node_uid)
-            if target_ref is None:
-                return False
-            if target_ref.node.is_generation_unit:
-                target_ref.node.is_generation_unit = False
-                target_ref.node.constraints = None
-            self._relevel_subtree(moving_node, target_ref.node.level + 1)
-            target_ref.node.children.append(moving_node)
-            return True
-
-        target_ref = self._match_node(tree, target_ref.node.node_uid)
-        if target_ref is None or target_ref.parent is None:
-            return False
-
-        self._relevel_subtree(moving_node, target_ref.node.level)
-        insert_index = target_ref.index if position == "before" else target_ref.index + 1
-        target_ref.parent.children.insert(insert_index, moving_node)
-        return True
-
-    def _apply_soft_rename(self, tree: list[TOCNode], clause: str) -> bool:
-        if not any(token in clause for token in ("第一章", "第一章节", "首章")):
-            return False
-        if not any(token in clause for token in ("更明确", "更清晰", "修订", "优化标题")):
-            return False
-
-        first_editable = next((ref for ref in self._iter_refs(tree) if ref.parent is not None), None)
-        if first_editable is None:
-            return False
-        if first_editable.node.title.endswith("（修订）"):
-            return False
-        first_editable.node.title = f"{first_editable.node.title}（修订）"
-        return True
 
     def _build_new_node(self, *, parent: TOCNode, title: str, prototype: TOCNode | None) -> TOCNode:
         sibling_count = sum(
@@ -911,23 +762,6 @@ class TOCReviewChatAgent:
             parent.is_generation_unit = False
             parent.constraints = None
 
-    def _quoted_strings(self, text: str) -> list[str]:
-        return [item.strip() for item in self._QUOTE_PATTERN.findall(text) if item.strip()]
-
-    def _infer_add_mode(self, clause: str) -> str:
-        if "前" in clause:
-            return "before"
-        if "后" in clause:
-            return "after"
-        return "child"
-
-    def _position_mode(self, token: str) -> str:
-        if "前" in token:
-            return "before"
-        if "后" in token:
-            return "after"
-        return "child"
-
     def _cleanup_feedback_title(self, text: str) -> str:
         cleaned = self._strip_quotes(text)
         compact = cleaned.strip()
@@ -960,8 +794,9 @@ class TOCReviewChatAgent:
 
     def _normalize_review_tree(self, tree: list[TOCNode]) -> None:
         for index, root in enumerate(tree, start=1):
-            root.level = 1
-            self._normalize_review_subtree(root, expected_level=1, occurrence=index)
+            root.level = 0
+            root.node_id = ""
+            self._normalize_review_subtree(root, expected_level=0, occurrence=index)
 
     def _normalize_review_subtree(self, node: TOCNode, *, expected_level: int, occurrence: int) -> None:
         node.level = expected_level
@@ -998,15 +833,17 @@ class TOCReviewChatAgent:
             constraints=self._generation_constraints(),
             children=[],
         )
+        self._normalize_review_subtree(
+            synthetic_child,
+            expected_level=node.level + 1,
+            occurrence=1,
+        )
         node.children = [synthetic_child]
         node.is_generation_unit = False
         node.constraints = None
 
     def _visible_node_id(self, node_id: str) -> str:
-        parts = node_id.split(".")
-        if len(parts) <= 1:
-            return node_id
-        return ".".join(parts[1:])
+        return node_id
 
     def _stable_uid(self, level: int, seed: str) -> str:
         digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
@@ -1014,7 +851,7 @@ class TOCReviewChatAgent:
 
     def _generation_constraints(self) -> dict[str, object]:
         return {
-            "min_words": 1800,
-            "recommended_words": [1800, 2200],
+            "min_words": 1,
+            "recommended_words": [],
             "images": [2, 3],
         }

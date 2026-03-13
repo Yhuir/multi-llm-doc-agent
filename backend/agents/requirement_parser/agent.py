@@ -1,10 +1,14 @@
-"""Rule-based requirement parser agent for V1 skeleton."""
+"""Chunked requirement parser that extracts bidding requirements from the full doc."""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from docx import Document
 
@@ -47,13 +51,46 @@ class _ParagraphEntry:
     heading_level: int | None = None
 
 
-class RequirementParserAgent:
-    """Parse docx into requirement.json with clause/heading awareness."""
+@dataclass
+class _ExtractedSubsystem:
+    name: str
+    description: str
+    source_refs: list[str] = field(default_factory=list)
 
+
+@dataclass
+class _ChunkExtraction:
+    overview_points: list[str] = field(default_factory=list)
+    requirements: list[RequirementItem] = field(default_factory=list)
+    subsystems: list[_ExtractedSubsystem] = field(default_factory=list)
+    standards: list[RequirementItem] = field(default_factory=list)
+    acceptance: list[RequirementItem] = field(default_factory=list)
+
+
+@dataclass
+class _RequirementConsolidation:
+    project_name: str
+    overview: str
+    subsystems: list[_ExtractedSubsystem] = field(default_factory=list)
+    standards: list[str] = field(default_factory=list)
+    acceptance: list[str] = field(default_factory=list)
+
+
+class RequirementParserAgent:
+    """Parse docx into requirement.json by chunking the full document and using the text model."""
+
+    _MINIMAX_TEXT_ENDPOINT = "https://api.minimaxi.com/v1/text/chatcompletion_v2"
+    _WHATAI_TEXT_ENDPOINT = "https://api.whatai.cc/v1/chat/completions"
+    _JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", flags=re.S)
     _CLAUSE_PATTERN = re.compile(r"^(?P<code>\d+(?:\.\d+){1,5})[\s.、-]*(?P<body>.+)$")
     _NUMBERED_HEADING_PATTERN = re.compile(r"^(?P<code>\d+(?:\.\d+){0,3})[\s、.．]+(?P<body>.+)$")
     _CHAPTER_PATTERN = re.compile(r"^第[一二三四五六七八九十百千0-9]+[章节篇部分]\s*(?P<title>.*)$")
     _LIST_PATTERN = re.compile(r"^[（(]?[一二三四五六七八九十0-9]+[)）.、]\s*(?P<body>.+)$")
+    _STANDARD_PATTERN = re.compile(
+        r"(?<![A-Za-z0-9])(?:GB|JGJ|DL/T|IEC|ISO|T/[A-Za-z0-9]+)[A-Za-z0-9\-/]*(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    _SOURCE_REF_PATTERN = re.compile(r"^p\d+#L\d+$")
     _SUBSYSTEM_PATTERN = re.compile(
         r"([A-Za-z0-9\u4e00-\u9fff（）()\-]{2,32}?"
         r"(?:控制系统|回收系统|管理系统|供热系统|热泵系统|子系统|平台|模块|装置|系统))"
@@ -95,6 +132,58 @@ class RequirementParserAgent:
         "提升",
     )
     _CONTEXT_PREFIXES = ("当前的", "当前", "现有的", "现有", "原有的", "原有", "本次", "针对")
+    _REQUIREMENT_KEYWORDS = (
+        "应",
+        "须",
+        "必须",
+        "不得",
+        "负责",
+        "要求",
+        "提供",
+        "满足",
+        "完成",
+        "实现",
+        "采用",
+        "具备",
+        "接口",
+        "验收",
+        "调试",
+        "施工",
+        "培训",
+        "售后",
+        "维保",
+        "质保",
+        "交付",
+        "服务",
+        "安装",
+        "控制",
+        "监控",
+        "网络",
+        "通讯",
+        "响应",
+        "整改",
+        "升级",
+        "改造",
+    )
+    _REQUIREMENT_TYPES = {
+        "scope",
+        "technical",
+        "service",
+        "acceptance",
+        "standard",
+        "interface",
+        "delivery",
+        "schedule",
+        "quality",
+        "training",
+        "warranty",
+        "safety",
+        "procurement",
+        "operation",
+        "maintenance",
+        "other",
+        "verbatim_requirement",
+    }
 
     def parse(
         self,
@@ -102,10 +191,12 @@ class RequirementParserAgent:
         task_id: str,
         upload_file_path: Path,
         fallback_title: str,
+        generation_config: dict[str, Any] | None = None,
     ) -> tuple[RequirementDocument, dict]:
         if upload_file_path.suffix.lower() != ".docx":
             raise ValueError("Only .docx is supported.")
 
+        provider, model_name, api_key = self._resolve_generation_config(generation_config)
         paragraphs = self._extract_docx_paragraphs(upload_file_path)
         lines = [paragraph.text for paragraph in paragraphs]
         has_original_content = bool(lines)
@@ -121,11 +212,71 @@ class RequirementParserAgent:
             ]
 
         source_index = self._build_source_index(paragraphs)
-        subsystems = self._extract_subsystems(paragraphs)
-        standards = self._extract_standards(lines)
-        acceptance = self._extract_acceptance(lines)
-        project_name = self._extract_project_name(paragraphs, subsystems, fallback_title)
-        overview = self._extract_overview(paragraphs)
+        chunks = self._build_chunks(paragraphs)
+        chunk_extractions = [
+            self._extract_chunk_payload(
+                chunk=chunk,
+                provider=provider,
+                model_name=model_name,
+                api_key=api_key,
+                focus_refs=[],
+            )
+            for chunk in chunks
+        ]
+        aggregate = self._aggregate_chunk_extractions(chunk_extractions, source_index=source_index)
+
+        uncovered_refs = self._find_uncovered_requirement_refs(
+            paragraphs=paragraphs,
+            covered_refs={item.source_ref for item in aggregate.requirements if item.source_ref},
+        )
+        if uncovered_refs:
+            for focused_chunk in self._build_chunks_from_refs(paragraphs, uncovered_refs):
+                follow_up = self._extract_chunk_payload(
+                    chunk=focused_chunk,
+                    provider=provider,
+                    model_name=model_name,
+                    api_key=api_key,
+                    focus_refs=[f"p1#L{entry.line_no}" for entry in focused_chunk],
+                )
+                aggregate = self._aggregate_chunk_extractions(
+                    [aggregate, follow_up],
+                    source_index=source_index,
+                )
+
+        uncovered_refs = self._find_uncovered_requirement_refs(
+            paragraphs=paragraphs,
+            covered_refs={item.source_ref for item in aggregate.requirements if item.source_ref},
+        )
+        coverage_closure_items: list[RequirementItem] = []
+        if uncovered_refs:
+            coverage_closure_items = self._build_verbatim_closure_requirements(
+                paragraphs=paragraphs,
+                refs=uncovered_refs,
+            )
+            aggregate = self._aggregate_chunk_extractions(
+                [
+                    aggregate,
+                    _ChunkExtraction(requirements=coverage_closure_items),
+                ],
+                source_index=source_index,
+            )
+
+        consolidation = self._consolidate_extractions(
+            aggregate=aggregate,
+            source_index=source_index,
+            fallback_title=fallback_title,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+        )
+        subsystems = self._materialize_subsystems(
+            subsystem_candidates=consolidation.subsystems or aggregate.subsystems,
+            bidding_requirements=aggregate.requirements,
+        )
+        project_name = consolidation.project_name
+        overview = consolidation.overview
+        standards = consolidation.standards or [item.value for item in aggregate.standards]
+        acceptance = consolidation.acceptance or [item.value for item in aggregate.acceptance]
 
         requirement = RequirementDocument(
             project=RequirementProject(
@@ -143,6 +294,7 @@ class RequirementParserAgent:
                 standards=standards,
                 acceptance=acceptance,
             ),
+            bidding_requirements=aggregate.requirements,
             source_index=source_index,
         )
 
@@ -155,8 +307,11 @@ class RequirementParserAgent:
         if not acceptance:
             missing_fields.append("constraints.acceptance")
         if not subsystems:
-            warnings.append("No clause-like subsystem detected; fallback headings used.")
-        warnings.append("TODO: replace rule-based parser with richer extraction in later rounds")
+            warnings.append("No subsystem could be consolidated from the full-document extraction result.")
+        if coverage_closure_items:
+            warnings.append(
+                f"Coverage closure added {len(coverage_closure_items)} verbatim requirement items for uncovered refs."
+            )
 
         parse_report = {
             "task_id": task_id,
@@ -164,11 +319,796 @@ class RequirementParserAgent:
             "result": AgentResult.PASS.value,
             "paragraph_count": len(lines),
             "subsystem_count": len(subsystems),
+            "chunk_count": len(chunks),
+            "bidding_requirement_count": len(requirement.bidding_requirements),
+            "coverage_closure_count": len(coverage_closure_items),
             "missing_fields": missing_fields,
             "warnings": warnings,
             "generated_at": utc_now_iso(),
         }
         return requirement, parse_report
+
+    def _resolve_generation_config(self, generation_config: dict[str, Any] | None) -> tuple[str, str, str]:
+        config = generation_config or {}
+        provider = str(config.get("text_provider") or "").strip().lower()
+        model_name = str(config.get("text_model_name") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
+        api_key = str(config.get("text_api_key") or "").strip()
+        if provider not in {"minimax", "whatai", "google"}:
+            raise ValueError(
+                "Requirement parsing requires a supported text model provider. "
+                f"Current provider: {provider or 'unset'}."
+            )
+        if not api_key:
+            raise ValueError("Requirement parsing requires `text_api_key`. Please configure the text model first.")
+        return provider, model_name, api_key
+
+    def _request_minimax_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "name": "Requirement Parser",
+                    "content": (
+                        "你是招标需求全文解析器。"
+                        "必须通读输入文本，提取其中所有招标要求，禁止套用模板或遗漏要求。"
+                    ),
+                },
+                {"role": "user", "name": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+        }
+        req = urlrequest.Request(
+            self._MINIMAX_TEXT_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlrequest.urlopen(req, timeout=240) as response:
+                body = response.read().decode("utf-8")
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"Requirement parsing model request failed: HTTP {exc.code} {detail}") from exc
+        except (urlerror.URLError, TimeoutError) as exc:
+            raise ValueError(f"Requirement parsing model request failed: {exc}") from exc
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Requirement parsing model returned invalid JSON payload.") from exc
+
+        base_resp = data.get("base_resp") or {}
+        if base_resp.get("status_code") not in (None, 0):
+            raise ValueError(
+                f"Requirement parsing model returned error: {base_resp.get('status_msg') or base_resp.get('status_code')}"
+            )
+
+        content = (
+            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if isinstance(data.get("choices"), list)
+            else None
+        )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Requirement parsing model returned empty content.")
+        return content
+
+    def _request_whatai_completion(self, *, api_key: str, model_name: str, prompt: str) -> str:
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是招标需求全文解析器。"
+                        "必须通读输入文本，提取其中所有招标要求，禁止套用模板或遗漏要求。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+        }
+        req = urlrequest.Request(
+            self._WHATAI_TEXT_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlrequest.urlopen(req, timeout=240) as response:
+                body = response.read().decode("utf-8")
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise ValueError(f"Requirement parsing model request failed: HTTP {exc.code} {detail}") from exc
+        except (urlerror.URLError, TimeoutError) as exc:
+            raise ValueError(f"Requirement parsing model request failed: {exc}") from exc
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Requirement parsing model returned invalid JSON payload.") from exc
+
+        if data.get("error"):
+            raise ValueError(f"Requirement parsing model returned error: {data['error']}")
+
+        content = (
+            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if isinstance(data.get("choices"), list)
+            else None
+        )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Requirement parsing model returned empty content.")
+        return content
+
+    def _build_chunks(
+        self,
+        paragraphs: list[_ParagraphEntry],
+        *,
+        max_chars: int = 5200,
+        max_paragraphs: int = 32,
+    ) -> list[list[_ParagraphEntry]]:
+        chunks: list[list[_ParagraphEntry]] = []
+        current: list[_ParagraphEntry] = []
+        current_chars = 0
+        for entry in paragraphs:
+            estimated_chars = len(entry.text) + 24
+            if current and (len(current) >= max_paragraphs or current_chars + estimated_chars > max_chars):
+                chunks.append(current)
+                current = []
+                current_chars = 0
+            current.append(entry)
+            current_chars += estimated_chars
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _build_chunks_from_refs(
+        self,
+        paragraphs: list[_ParagraphEntry],
+        refs: list[str],
+        *,
+        max_chars: int = 3600,
+        max_paragraphs: int = 18,
+    ) -> list[list[_ParagraphEntry]]:
+        ref_set = set(refs)
+        focused = [entry for entry in paragraphs if f"p1#L{entry.line_no}" in ref_set]
+        return self._build_chunks(focused, max_chars=max_chars, max_paragraphs=max_paragraphs)
+
+    def _extract_chunk_payload(
+        self,
+        *,
+        chunk: list[_ParagraphEntry],
+        provider: str,
+        model_name: str,
+        api_key: str,
+        focus_refs: list[str],
+    ) -> _ChunkExtraction:
+        prompt = self._build_chunk_prompt(chunk=chunk, focus_refs=focus_refs)
+        request_fn = self._request_minimax_completion if provider == "minimax" else self._request_whatai_completion
+        content = request_fn(api_key=api_key, model_name=model_name, prompt=prompt)
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            try:
+                return self._parse_chunk_output(content=content, chunk=chunk)
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= 1:
+                    break
+                repair_prompt = "\n".join(
+                    [
+                        prompt,
+                        "",
+                        "上一次输出存在问题：",
+                        str(exc),
+                        "",
+                        "请修正并只输出合法 JSON。上一次无效输出如下：",
+                        content,
+                    ]
+                )
+                content = request_fn(api_key=api_key, model_name=model_name, prompt=repair_prompt)
+        assert last_error is not None
+        raise last_error
+
+    def _build_chunk_prompt(self, *, chunk: list[_ParagraphEntry], focus_refs: list[str]) -> str:
+        source_lines = [f"p1#L{entry.line_no} | {entry.text}" for entry in chunk]
+        focus_lines = [f"- {ref}" for ref in focus_refs]
+        return "\n".join(
+            [
+                "任务：阅读以下招标文档片段，提取其中所有招标要求。",
+                "要求：",
+                "1. 必须逐条检查片段中的段落和小标题，只要包含招标范围、技术要求、实施要求、接口要求、供货要求、服务要求、培训要求、质保要求、验收要求、进度要求或标准约束，就必须提取。",
+                "2. 禁止遗漏片段中的要求，也禁止编造文档中没有出现的要求。",
+                "3. 每条 requirements 必须给出 source_ref，且 source_ref 必须来自下方片段中的引用键。",
+                "4. subsystems 只保留文档中明确出现的系统/子系统/平台/模块名称。",
+                "5. standards 只保留文档中明确出现的标准号。",
+                "6. acceptance 只保留文档中明确出现的验收、试运行、交付、签认、资料提交相关要求。",
+                "7. 只输出 JSON，不要输出解释。",
+                "",
+                "输出 JSON 格式：",
+                "{",
+                '  "overview_points": ["片段中的关键范围或目标摘要"],',
+                '  "requirements": [',
+                '    {"type": "technical", "key": "短键", "value": "提炼后的要求内容", "source_ref": "p1#L10"}',
+                "  ],",
+                '  "subsystems": [',
+                '    {"name": "系统名称", "description": "该系统在片段中的要求摘要", "source_refs": ["p1#L10"]}',
+                "  ],",
+                '  "standards": [',
+                '    {"name": "GB50348", "source_ref": "p1#L11"}',
+                "  ],",
+                '  "acceptance": [',
+                '    {"value": "完成试运行并提交验收资料", "source_ref": "p1#L12"}',
+                "  ]",
+                "}",
+                "",
+                "必须优先复查的上轮未覆盖引用：",
+                *(focus_lines or ["- 无"]),
+                "",
+                "文档片段：",
+                *source_lines,
+            ]
+        )
+
+    def _parse_chunk_output(self, *, content: str, chunk: list[_ParagraphEntry]) -> _ChunkExtraction:
+        payload = self._extract_json_payload(content)
+        allowed_refs = {f"p1#L{entry.line_no}" for entry in chunk}
+        paragraph_lookup = {f"p1#L{entry.line_no}": entry.text for entry in chunk}
+
+        overview_points = self._normalize_string_list(payload.get("overview_points"))
+        requirements = self._parse_requirement_items(
+            payload.get("requirements"),
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )
+        standards = self._parse_named_items(
+            payload.get("standards"),
+            item_type="standard",
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )
+        acceptance = self._parse_named_items(
+            payload.get("acceptance"),
+            item_type="acceptance",
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )
+        subsystems = self._parse_subsystem_items(
+            payload.get("subsystems"),
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )
+        return _ChunkExtraction(
+            overview_points=overview_points,
+            requirements=requirements,
+            subsystems=subsystems,
+            standards=standards,
+            acceptance=acceptance,
+        )
+
+    def _parse_requirement_items(
+        self,
+        raw_items: Any,
+        *,
+        allowed_refs: set[str],
+        paragraph_lookup: dict[str, str],
+    ) -> list[RequirementItem]:
+        if not isinstance(raw_items, list):
+            return []
+        items: list[RequirementItem] = []
+        for index, raw in enumerate(raw_items, start=1):
+            if not isinstance(raw, dict):
+                continue
+            value = self._normalize_text(str(raw.get("value") or raw.get("text") or ""))
+            if not value:
+                continue
+            source_ref = self._resolve_source_ref(
+                raw.get("source_ref"),
+                text=value,
+                allowed_refs=allowed_refs,
+                paragraph_lookup=paragraph_lookup,
+            )
+            if source_ref is None:
+                continue
+            item_type = self._normalize_requirement_type(str(raw.get("type") or "other"))
+            key = self._normalize_requirement_key(str(raw.get("key") or ""), fallback=value, index=index)
+            items.append(
+                RequirementItem(
+                    type=item_type,
+                    key=key,
+                    value=value,
+                    source_ref=source_ref,
+                )
+            )
+        return self._dedupe_requirement_items(items)
+
+    def _parse_named_items(
+        self,
+        raw_items: Any,
+        *,
+        item_type: str,
+        allowed_refs: set[str],
+        paragraph_lookup: dict[str, str],
+    ) -> list[RequirementItem]:
+        if not isinstance(raw_items, list):
+            return []
+        parsed: list[RequirementItem] = []
+        for index, raw in enumerate(raw_items, start=1):
+            if isinstance(raw, dict):
+                value = self._normalize_text(str(raw.get("name") or raw.get("value") or raw.get("text") or ""))
+                raw_ref = raw.get("source_ref")
+            else:
+                value = self._normalize_text(str(raw))
+                raw_ref = None
+            if not value:
+                continue
+            source_ref = self._resolve_source_ref(
+                raw_ref,
+                text=value,
+                allowed_refs=allowed_refs,
+                paragraph_lookup=paragraph_lookup,
+            )
+            if source_ref is None:
+                continue
+            parsed.append(
+                RequirementItem(
+                    type=item_type,
+                    key=self._normalize_requirement_key("", fallback=value, index=index),
+                    value=value,
+                    source_ref=source_ref,
+                )
+            )
+        return self._dedupe_requirement_items(parsed)
+
+    def _parse_subsystem_items(
+        self,
+        raw_items: Any,
+        *,
+        allowed_refs: set[str],
+        paragraph_lookup: dict[str, str],
+    ) -> list[_ExtractedSubsystem]:
+        if not isinstance(raw_items, list):
+            return []
+        results: list[_ExtractedSubsystem] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            name = self._normalize_subsystem_title(str(raw.get("name") or ""))
+            description = self._normalize_text(str(raw.get("description") or ""))
+            if not name:
+                continue
+            refs: list[str] = []
+            raw_refs = raw.get("source_refs")
+            if isinstance(raw_refs, list):
+                for item in raw_refs:
+                    source_ref = self._resolve_source_ref(
+                        item,
+                        text=description or name,
+                        allowed_refs=allowed_refs,
+                        paragraph_lookup=paragraph_lookup,
+                    )
+                    if source_ref and source_ref not in refs:
+                        refs.append(source_ref)
+            if not refs:
+                inferred_ref = self._resolve_source_ref(
+                    None,
+                    text=description or name,
+                    allowed_refs=allowed_refs,
+                    paragraph_lookup=paragraph_lookup,
+                )
+                if inferred_ref:
+                    refs.append(inferred_ref)
+            results.append(_ExtractedSubsystem(name=name, description=description or name, source_refs=refs))
+        deduped: list[_ExtractedSubsystem] = []
+        seen: set[str] = set()
+        for item in results:
+            key = self._normalize_topic_key(item.name)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    def _aggregate_chunk_extractions(
+        self,
+        extractions: list[_ChunkExtraction],
+        *,
+        source_index: dict[str, SourceIndexItem],
+    ) -> _ChunkExtraction:
+        overview_points: list[str] = []
+        requirements: list[RequirementItem] = []
+        standards: list[RequirementItem] = []
+        acceptance: list[RequirementItem] = []
+        subsystem_map: dict[str, _ExtractedSubsystem] = {}
+
+        for extraction in extractions:
+            for point in extraction.overview_points:
+                if point and point not in overview_points:
+                    overview_points.append(point)
+            requirements.extend(extraction.requirements)
+            standards.extend(extraction.standards)
+            acceptance.extend(extraction.acceptance)
+            for subsystem in extraction.subsystems:
+                key = self._normalize_topic_key(subsystem.name)
+                existing = subsystem_map.get(key)
+                if existing is None:
+                    subsystem_map[key] = _ExtractedSubsystem(
+                        name=subsystem.name,
+                        description=subsystem.description,
+                        source_refs=list(subsystem.source_refs),
+                    )
+                    continue
+                if subsystem.description and subsystem.description not in existing.description:
+                    existing.description = "；".join(
+                        [item for item in [existing.description, subsystem.description] if item][:2]
+                    )
+                for ref in subsystem.source_refs:
+                    if ref not in existing.source_refs:
+                        existing.source_refs.append(ref)
+
+        requirements = self._dedupe_requirement_items(requirements)
+        standards = self._dedupe_requirement_items(standards)
+        acceptance = self._dedupe_requirement_items(acceptance)
+
+        for item in [*standards, *acceptance]:
+            if not any(
+                existing.source_ref == item.source_ref and existing.value == item.value
+                for existing in requirements
+            ):
+                requirements.append(item)
+        requirements = self._sort_requirement_items(self._dedupe_requirement_items(requirements), source_index)
+
+        return _ChunkExtraction(
+            overview_points=overview_points,
+            requirements=requirements,
+            subsystems=list(subsystem_map.values()),
+            standards=standards,
+            acceptance=acceptance,
+        )
+
+    def _find_uncovered_requirement_refs(
+        self,
+        *,
+        paragraphs: list[_ParagraphEntry],
+        covered_refs: set[str],
+    ) -> list[str]:
+        uncovered: list[str] = []
+        for entry in paragraphs:
+            ref = f"p1#L{entry.line_no}"
+            if ref in covered_refs:
+                continue
+            if self._is_requirement_candidate(entry):
+                uncovered.append(ref)
+        return uncovered
+
+    def _is_requirement_candidate(self, entry: _ParagraphEntry) -> bool:
+        text = self._normalize_text(entry.text)
+        if not text:
+            return False
+        if entry.heading_level == 1 or self._CHAPTER_PATTERN.match(text):
+            return False
+        if entry.heading_level is not None and entry.heading_level >= 2:
+            return True
+        if self._CLAUSE_PATTERN.match(text):
+            return True
+        if self._STANDARD_PATTERN.search(text):
+            return True
+        if len(text) > 260:
+            return False
+        return any(keyword in text for keyword in self._REQUIREMENT_KEYWORDS)
+
+    def _build_verbatim_closure_requirements(
+        self,
+        *,
+        paragraphs: list[_ParagraphEntry],
+        refs: list[str],
+    ) -> list[RequirementItem]:
+        lookup = {f"p1#L{entry.line_no}": entry for entry in paragraphs}
+        items: list[RequirementItem] = []
+        for index, ref in enumerate(refs, start=1):
+            entry = lookup.get(ref)
+            if entry is None:
+                continue
+            items.append(
+                RequirementItem(
+                    type="verbatim_requirement",
+                    key=f"coverage_{index:03d}",
+                    value=entry.text,
+                    source_ref=ref,
+                )
+            )
+        return items
+
+    def _consolidate_extractions(
+        self,
+        *,
+        aggregate: _ChunkExtraction,
+        source_index: dict[str, SourceIndexItem],
+        fallback_title: str,
+        provider: str,
+        model_name: str,
+        api_key: str,
+    ) -> _RequirementConsolidation:
+        prompt = self._build_consolidation_prompt(
+            aggregate=aggregate,
+            source_index=source_index,
+            fallback_title=fallback_title,
+        )
+        request_fn = self._request_minimax_completion if provider == "minimax" else self._request_whatai_completion
+        content = request_fn(api_key=api_key, model_name=model_name, prompt=prompt)
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            try:
+                return self._parse_consolidation_output(content=content, source_index=source_index)
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= 1:
+                    break
+                repair_prompt = "\n".join(
+                    [
+                        prompt,
+                        "",
+                        "上一次输出存在问题：",
+                        str(exc),
+                        "",
+                        "请修正并只输出合法 JSON。上一次无效输出如下：",
+                        content,
+                    ]
+                )
+                content = request_fn(api_key=api_key, model_name=model_name, prompt=repair_prompt)
+        assert last_error is not None
+        raise last_error
+
+    def _build_consolidation_prompt(
+        self,
+        *,
+        aggregate: _ChunkExtraction,
+        source_index: dict[str, SourceIndexItem],
+        fallback_title: str,
+    ) -> str:
+        requirement_lines = [
+            f"- {item.source_ref}: [{item.type}] {item.value}"
+            for item in aggregate.requirements
+            if item.source_ref and item.value
+        ]
+        subsystem_lines = [
+            f"- {item.name}: {item.description} | refs={', '.join(item.source_refs) or '无'}"
+            for item in aggregate.subsystems
+            if item.name
+        ]
+        standard_lines = [f"- {item.value}" for item in aggregate.standards if item.value]
+        acceptance_lines = [f"- {item.value}" for item in aggregate.acceptance if item.value]
+        source_lines = [
+            f"{ref} | {item.text}"
+            for ref, item in sorted(
+                source_index.items(),
+                key=lambda pair: self._line_no_from_ref(pair[0]),
+            )[:120]
+        ]
+        return "\n".join(
+            [
+                "任务：根据已分段提取出的全文招标要求，整编 requirement.json 的核心摘要字段。",
+                "要求：",
+                "1. project_name、overview、subsystems、standards、acceptance 都必须来自下方已提取的招标要求和原文索引概览。",
+                "2. 禁止补充文档中不存在的系统、标准、验收结论或服务承诺。",
+                "3. subsystems 只保留文档中明确出现并且对后续目录/正文有组织价值的系统或专题。",
+                "4. 只输出 JSON。",
+                "",
+                "输出 JSON 格式：",
+                "{",
+                '  "project_name": "项目名称",',
+                '  "overview": "全文范围概述",',
+                '  "subsystems": [',
+                '    {"name": "系统名称", "description": "系统要求摘要", "source_refs": ["p1#L10"]}',
+                "  ],",
+                '  "standards": ["GB50348"],',
+                '  "acceptance": ["完成试运行并提交资料"]',
+                "}",
+                "",
+                f"fallback_title：{self._normalize_text(fallback_title) or '未提供'}",
+                "",
+                "已提取的招标要求（必须优先使用）：",
+                *(requirement_lines or ["- 无"]),
+                "",
+                "已识别系统候选：",
+                *(subsystem_lines or ["- 无"]),
+                "",
+                "已识别标准：",
+                *(standard_lines or ["- 无"]),
+                "",
+                "已识别验收/交付要求：",
+                *(acceptance_lines or ["- 无"]),
+                "",
+                "原文索引概览（前 120 行，仅用于校核命名和范围）：",
+                *source_lines,
+            ]
+        )
+
+    def _parse_consolidation_output(
+        self,
+        *,
+        content: str,
+        source_index: dict[str, SourceIndexItem],
+    ) -> _RequirementConsolidation:
+        payload = self._extract_json_payload(content)
+        project_name = self._normalize_text(str(payload.get("project_name") or payload.get("title") or ""))
+        overview = self._normalize_text(str(payload.get("overview") or ""))
+        if not project_name:
+            raise ValueError("Requirement consolidation did not return project_name.")
+        if not overview:
+            raise ValueError("Requirement consolidation did not return overview.")
+        allowed_refs = set(source_index.keys())
+        paragraph_lookup = {ref: item.text for ref, item in source_index.items()}
+        subsystems = self._parse_subsystem_items(
+            payload.get("subsystems"),
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )
+        standards = [item.value for item in self._parse_named_items(
+            payload.get("standards"),
+            item_type="standard",
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )]
+        acceptance = [item.value for item in self._parse_named_items(
+            payload.get("acceptance"),
+            item_type="acceptance",
+            allowed_refs=allowed_refs,
+            paragraph_lookup=paragraph_lookup,
+        )]
+        return _RequirementConsolidation(
+            project_name=project_name,
+            overview=overview,
+            subsystems=subsystems,
+            standards=self._dedupe_strings(standards),
+            acceptance=self._dedupe_strings(acceptance),
+        )
+
+    def _build_requirement_lookup(
+        self,
+        bidding_requirements: list[RequirementItem],
+    ) -> dict[str, list[RequirementItem]]:
+        lookup: dict[str, list[RequirementItem]] = {}
+        for item in bidding_requirements:
+            if not item.source_ref:
+                continue
+            lookup.setdefault(item.source_ref, []).append(item)
+        return lookup
+
+    def _materialize_subsystems(
+        self,
+        *,
+        subsystem_candidates: list[_ExtractedSubsystem],
+        bidding_requirements: list[RequirementItem],
+    ) -> list[RequirementSubsystem]:
+        requirement_lookup = self._build_requirement_lookup(bidding_requirements)
+        subsystems: list[RequirementSubsystem] = []
+        for candidate in subsystem_candidates:
+            refs = [ref for ref in candidate.source_refs if ref]
+            linked_requirements: list[RequirementItem] = []
+            for ref in refs:
+                for item in requirement_lookup.get(ref, []):
+                    if item not in linked_requirements:
+                        linked_requirements.append(item)
+            if not linked_requirements:
+                normalized_name = self._normalize_topic_key(candidate.name)
+                for item in bidding_requirements:
+                    if normalized_name and normalized_name in self._normalize_topic_key(item.value):
+                        linked_requirements.append(item)
+            subsystems.append(
+                RequirementSubsystem(
+                    name=candidate.name,
+                    description=candidate.description or candidate.name,
+                    requirements=self._sort_requirement_items(
+                        self._dedupe_requirement_items(linked_requirements),
+                        {item.source_ref: SourceIndexItem(page=1, paragraph_id="", text="") for item in linked_requirements if item.source_ref},
+                    ),
+                    interfaces=[item.value for item in linked_requirements if "接口" in item.value][:3],
+                )
+            )
+        return subsystems
+
+    def _extract_json_payload(self, content: str) -> dict[str, Any]:
+        candidates = self._JSON_BLOCK_PATTERN.findall(content)
+        first = content.find("{")
+        last = content.rfind("}")
+        if first != -1 and last != -1 and first < last:
+            candidates.append(content[first : last + 1])
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        raise ValueError("Requirement parsing model did not return parsable JSON.")
+
+    def _normalize_string_list(self, raw_items: Any) -> list[str]:
+        if not isinstance(raw_items, list):
+            return []
+        items: list[str] = []
+        for raw in raw_items:
+            value = self._normalize_text(str(raw))
+            if value and value not in items:
+                items.append(value)
+        return items
+
+    def _normalize_requirement_type(self, raw_type: str) -> str:
+        normalized = self._normalize_text(raw_type).lower().replace(" ", "_")
+        return normalized if normalized in self._REQUIREMENT_TYPES else "other"
+
+    def _normalize_requirement_key(self, raw_key: str, *, fallback: str, index: int) -> str:
+        normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", self._normalize_text(raw_key)).strip("_")
+        if not normalized:
+            normalized = self._normalize_topic_key(fallback)
+        return (normalized[:48] or f"item_{index:03d}").lower()
+
+    def _resolve_source_ref(
+        self,
+        raw_ref: Any,
+        *,
+        text: str,
+        allowed_refs: set[str],
+        paragraph_lookup: dict[str, str],
+    ) -> str | None:
+        normalized_ref = self._normalize_text(str(raw_ref or ""))
+        if normalized_ref in allowed_refs and self._SOURCE_REF_PATTERN.match(normalized_ref):
+            return normalized_ref
+        normalized_text = self._normalize_text(text)
+        if normalized_text:
+            exact_matches = [ref for ref, paragraph in paragraph_lookup.items() if normalized_text in paragraph]
+            if len(exact_matches) == 1:
+                return exact_matches[0]
+        return None
+
+    def _dedupe_requirement_items(self, items: list[RequirementItem]) -> list[RequirementItem]:
+        deduped: list[RequirementItem] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in items:
+            marker = (
+                item.type,
+                item.source_ref or "",
+                self._normalize_text(item.value),
+            )
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(item)
+        return deduped
+
+    def _sort_requirement_items(
+        self,
+        items: list[RequirementItem],
+        source_index: dict[str, SourceIndexItem],
+    ) -> list[RequirementItem]:
+        return sorted(
+            items,
+            key=lambda item: (
+                self._line_no_from_ref(item.source_ref or ""),
+                self._normalize_text(item.value),
+            ),
+        )
+
+    def _line_no_from_ref(self, source_ref: str) -> int:
+        match = re.search(r"#L(\d+)$", source_ref)
+        if match is None:
+            return 10**9
+        return int(match.group(1))
+
+    def _dedupe_strings(self, values: list[str]) -> list[str]:
+        deduped: list[str] = []
+        for value in values:
+            cleaned = self._normalize_text(value)
+            if cleaned and cleaned not in deduped:
+                deduped.append(cleaned)
+        return deduped
 
     def _extract_docx_paragraphs(self, file_path: Path) -> list[_ParagraphEntry]:
         try:

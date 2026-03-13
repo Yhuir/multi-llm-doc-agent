@@ -39,6 +39,14 @@ class ImageGenerationAgent:
         "image-01": "image-01",
         "image-01-live": "image-01-live",
     }
+    WHATAI_ENDPOINT = "https://api.whatai.cc/v1/images/generations"
+    WHATAI_MODEL_MAP = {
+        "nano-banana": "nano-banana",
+    }
+    WHATAI_SIZE_MAP = {
+        "2:1": "1536x768",
+        "3:2": "1536x1024",
+    }
     DOUBAO_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
     DOUBAO_MODEL_ORDER = [
         "Doubao-Seedream-5.0-lite",
@@ -74,6 +82,12 @@ class ImageGenerationAgent:
         absolute_stem.parent.mkdir(parents=True, exist_ok=True)
         if self._use_doubao(provider_config):
             absolute_path = self._generate_via_doubao(
+                output_stem=absolute_stem,
+                prompt_item=prompt_item,
+                provider_config=provider_config or {},
+            )
+        elif self._use_whatai(provider_config):
+            absolute_path = self._generate_via_whatai(
                 output_stem=absolute_stem,
                 prompt_item=prompt_item,
                 provider_config=provider_config or {},
@@ -187,12 +201,47 @@ class ImageGenerationAgent:
             + " | ".join(errors)
         )
 
+    def _generate_via_whatai(
+        self,
+        *,
+        output_stem: Path,
+        prompt_item: ImagePromptItem,
+        provider_config: dict[str, Any],
+    ) -> Path:
+        api_key = str(provider_config.get("image_api_key") or "").strip()
+        if not api_key:
+            raise RuntimeError("nano-banana image provider selected but image_api_key is empty.")
+
+        selected_model = str(provider_config.get("image_model_name") or "nano-banana").strip() or "nano-banana"
+        model_name = self._resolve_whatai_model(selected_model)
+        payload = {
+            "model": model_name,
+            "prompt": prompt_item.prompt,
+            "n": 1,
+            "response_format": "url",
+            "aspect_ratio": self._normalize_aspect_ratio(prompt_item.aspect_ratio),
+            "size": self._whatai_size(prompt_item.aspect_ratio),
+        }
+        image_url = self._request_whatai_image_url(api_key=api_key, payload=payload)
+        provider_config["_resolved_image_model_name"] = selected_model
+        provider_config["_resolved_image_model_id"] = model_name
+        provider_config["_image_model_attempts"] = [selected_model]
+        provider_config.pop("_image_model_fallback_from", None)
+        return self._download_image_url(image_url=image_url, output_stem=output_stem)
+
     @classmethod
     def _resolve_minimax_model(cls, model_name: str) -> str:
         normalized = model_name.strip()
         if normalized in cls.MINIMAX_MODEL_MAP:
             return cls.MINIMAX_MODEL_MAP[normalized]
         return cls.MINIMAX_MODEL_MAP["MiniMax-M2.5"]
+
+    @classmethod
+    def _resolve_whatai_model(cls, model_name: str) -> str:
+        normalized = model_name.strip()
+        if normalized in cls.WHATAI_MODEL_MAP:
+            return cls.WHATAI_MODEL_MAP[normalized]
+        return cls.WHATAI_MODEL_MAP["nano-banana"]
 
     @classmethod
     def _resolve_doubao_model(cls, model_name: str) -> str:
@@ -224,6 +273,14 @@ class ImageGenerationAgent:
         return provider == "doubao"
 
     @staticmethod
+    def _use_whatai(provider_config: dict[str, Any] | None) -> bool:
+        if not provider_config:
+            return False
+        provider = str(provider_config.get("image_provider") or "").strip().lower()
+        api_key = str(provider_config.get("image_api_key") or "").strip()
+        return provider in {"whatai", "google"} and bool(api_key)
+
+    @staticmethod
     def _use_minimax(provider_config: dict[str, Any] | None) -> bool:
         if not provider_config:
             return False
@@ -247,6 +304,11 @@ class ImageGenerationAgent:
                 cls.MINIMAX_ASPECT_RATIO_MAP[cls.DEFAULT_ASPECT_RATIO],
             )
         return normalized
+
+    @classmethod
+    def _whatai_size(cls, aspect_ratio: str | None) -> str:
+        normalized = cls._normalize_aspect_ratio(aspect_ratio)
+        return cls.WHATAI_SIZE_MAP.get(normalized, cls.WHATAI_SIZE_MAP[cls.DEFAULT_ASPECT_RATIO])
 
     def _request_minimax_image_url(self, *, api_key: str, payload: dict[str, Any]) -> str:
         request = urllib_request.Request(
@@ -312,6 +374,38 @@ class ImageGenerationAgent:
         image_url = str((data_items[0] or {}).get("url") or "").strip()
         if not image_url:
             raise RuntimeError(f"Doubao image API returned no image url: {response_payload}")
+        return image_url
+
+    def _request_whatai_image_url(self, *, api_key: str, payload: dict[str, Any]) -> str:
+        request = urllib_request.Request(
+            self.WHATAI_ENDPOINT,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=90) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(
+                f"nano-banana image API HTTP {exc.code}: {detail[:400]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"nano-banana image API request failed: {exc.reason}") from exc
+
+        if response_payload.get("error"):
+            raise RuntimeError(f"nano-banana image API returned error: {response_payload['error']}")
+
+        data_items = response_payload.get("data") or []
+        if not data_items or not isinstance(data_items, list):
+            raise RuntimeError(f"nano-banana image API returned no data: {response_payload}")
+        image_url = str((data_items[0] or {}).get("url") or "").strip()
+        if not image_url:
+            raise RuntimeError(f"nano-banana image API returned no image url: {response_payload}")
         return image_url
 
     def _download_image_url(self, *, image_url: str, output_stem: Path) -> Path:

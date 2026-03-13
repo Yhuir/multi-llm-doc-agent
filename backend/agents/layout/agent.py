@@ -339,7 +339,7 @@ class LayoutAgent:
         if (
             len(nodes) == 1
             and not nodes[0].is_generation_unit
-            and nodes[0].title.strip() == "工程实施方案"
+            and nodes[0].level <= 1
             and nodes[0].children
         ):
             return nodes[0].children, nodes[0].level

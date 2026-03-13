@@ -82,6 +82,53 @@ class TOCDocument(StrictBaseModel):
     tree: list[TOCNode]
 
 
+class TOCChapterWordBudget(StrictBaseModel):
+    chapter_node_uid: str
+    chapter_node_id: str
+    chapter_title: str
+    generation_unit_count: int = 0
+    generation_unit_node_uids: list[str] = Field(default_factory=list)
+    min_total_words: int = 0
+    default_total_words: int = 0
+    target_total_words: int = 0
+    min_total_pages: int = 0
+    default_total_pages: int = 0
+    target_total_pages: int = 0
+    is_custom: bool = False
+
+
+class TOCWordBudgetDocument(StrictBaseModel):
+    task_id: str
+    version_no: int
+    chapters: list[TOCChapterWordBudget] = Field(default_factory=list)
+    estimated_total_words: int = 0
+    estimated_total_pages: int = 0
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class GenerationWordTarget(StrictBaseModel):
+    node_uid: str
+    node_id: str
+    title: str
+    chapter_node_uid: str
+    chapter_title: str
+    target_words: int
+    min_words: int
+    max_words: int
+    target_pages: float = 0.0
+    min_pages: float = 0.0
+    max_pages: float = 0.0
+
+
+class GenerationWordPlan(StrictBaseModel):
+    task_id: str
+    version_no: int
+    node_targets: list[GenerationWordTarget] = Field(default_factory=list)
+    estimated_total_words: int = 0
+    estimated_total_pages: int = 0
+    generated_at: str = Field(default_factory=utc_now_iso)
+
+
 class TOCNodeSnapshot(StrictBaseModel):
     snapshot_id: str
     task_id: str
@@ -221,6 +268,7 @@ class RequirementDocument(StrictBaseModel):
     project: RequirementProject
     scope: RequirementScope
     constraints: RequirementConstraints
+    bidding_requirements: list[RequirementItem] = Field(default_factory=list)
     source_index: dict[str, SourceIndexItem] = Field(default_factory=dict)
 
 
@@ -230,6 +278,9 @@ class ParseReport(StrictBaseModel):
     result: AgentResult
     paragraph_count: int
     subsystem_count: int
+    chunk_count: int = 0
+    bidding_requirement_count: int = 0
+    coverage_closure_count: int = 0
     missing_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     generated_at: str = Field(default_factory=utc_now_iso)

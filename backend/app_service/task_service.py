@@ -131,7 +131,11 @@ class TaskService:
         return upload_path
 
     def parse_requirement(self, task_id: str) -> dict:
-        return self.orchestrator.run_parse_requirement(task_id)
+        config = self.get_system_config()
+        task = self.get_task(task_id)
+        if task is not None and task.text_provider:
+            config["text_provider"] = task.text_provider
+        return self.orchestrator.run_parse_requirement(task_id, generation_config=config)
 
     def generate_toc(self, task_id: str):
         config = self.get_system_config()
@@ -166,10 +170,15 @@ class TaskService:
     ):
         if not outline_text.strip():
             raise ValueError("Outline text cannot be empty.")
+        config = self.get_system_config()
+        task = self.get_task(task_id)
+        if task is not None and task.text_provider:
+            config["text_provider"] = task.text_provider
         return self.orchestrator.import_toc_outline(
             task_id,
             outline_text,
             based_on_version_no=based_on_version_no,
+            generation_config=config,
         )
 
     def confirm_toc(self, task_id: str, version_no: int) -> int:
@@ -201,6 +210,23 @@ class TaskService:
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def get_toc_word_budget(self, task_id: str, version_no: int) -> dict:
+        document = self.orchestrator.get_toc_word_budget(task_id, version_no)
+        return document.model_dump(mode="json")
+
+    def update_toc_word_budget(
+        self,
+        task_id: str,
+        version_no: int,
+        chapter_targets: dict[str, int],
+    ) -> dict:
+        document = self.orchestrator.update_toc_word_budget(
+            task_id,
+            version_no,
+            chapter_targets,
+        )
+        return document.model_dump(mode="json")
 
     def get_requirement_document(self, task_id: str) -> dict | None:
         path = self.artifacts_root / task_id / "parsed" / "requirement.json"

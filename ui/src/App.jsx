@@ -11,24 +11,28 @@ import {
   listNodes,
   getParseReport,
   getToc,
+  getTocWordBudget,
   importTocOutline,
   listChat,
   listTasks,
   listTocVersions,
   outputUrl,
   reviewToc,
+  updateTocWordBudget,
   updateSystemConfig,
   uploadDocx
 } from "./api";
 import "./styles.css";
 
 const TEXT_MODEL_OPTIONS = [
-  { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" }
+  { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" },
+  { label: "gemini-3.1-pro-preview", modelName: "gemini-3.1-pro-preview", provider: "whatai" }
 ];
 
 const IMAGE_MODEL_OPTIONS = [
   { label: "关闭图像生成", modelName: "关闭图像生成", provider: "disabled" },
   { label: "MiniMax-M2.5", modelName: "MiniMax-M2.5", provider: "minimax" },
+  { label: "nano-banana", modelName: "nano-banana", provider: "whatai" },
   { label: "Doubao-Seedream-5.0-lite", modelName: "Doubao-Seedream-5.0-lite", provider: "doubao" },
   { label: "Doubao-Seedream-4.5", modelName: "Doubao-Seedream-4.5", provider: "doubao" },
   { label: "Doubao-Seed3D-1.0", modelName: "Doubao-Seed3D-1.0", provider: "doubao" },
@@ -124,20 +128,18 @@ function getVisibleTocNodes(nodes) {
   if (!nodes || nodes.length === 0) {
     return [];
   }
-  if (nodes.length === 1 && nodes[0].level === 1 && Array.isArray(nodes[0].children)) {
+  if (
+    nodes.length === 1 &&
+    nodes[0].level <= 1 &&
+    Array.isArray(nodes[0].children)
+  ) {
     return nodes[0].children;
   }
   return nodes;
 }
 
 function displayNodeId(nodeId) {
-  if (!nodeId) {
-    return "";
-  }
-  if (nodeId.startsWith("1.")) {
-    return nodeId.slice(2);
-  }
-  return nodeId;
+  return nodeId || "";
 }
 
 function normalizeSystemConfig(config) {
@@ -190,6 +192,64 @@ function upsertTocVersion(versions, nextVersion) {
   return [nextVersion, ...filtered].sort((a, b) => b.version_no - a.version_no);
 }
 
+function buildWordBudgetInputState(document) {
+  return (document?.chapters || []).reduce((acc, item) => {
+    acc[item.chapter_node_uid] = String(item.target_total_pages || item.default_total_pages || "");
+    return acc;
+  }, {});
+}
+
+function TocWordBudgetTree({ nodes, budgetMap, inputValues, onChange }) {
+  if (!nodes || nodes.length === 0) {
+    return <p className="empty-note">暂无目录内容。</p>;
+  }
+
+  return (
+    <ul className="toc-tree word-budget-tree">
+      {nodes.map((node) => {
+        const budgetItem = budgetMap[node.node_uid];
+        return (
+          <li key={node.node_uid}>
+            <div className="budget-tree-line">
+              <span>
+                {displayNodeId(node.node_id)} {node.title}
+                {node.is_generation_unit ? <strong className="tag"> 生成单元</strong> : null}
+              </span>
+              {budgetItem ? (
+                <label className="budget-input-group">
+                  <span>总页数</span>
+                  <input
+                    type="number"
+                    min={2}
+                    step="1"
+                    value={inputValues[budgetItem.chapter_node_uid] ?? ""}
+                    onChange={(event) =>
+                      onChange(budgetItem.chapter_node_uid, event.target.value)
+                    }
+                  />
+                </label>
+              ) : null}
+            </div>
+            {budgetItem ? (
+              <p className="budget-tree-note">
+                覆盖 {budgetItem.generation_unit_count} 个生成单元，默认 {budgetItem.default_total_pages} 页。
+              </p>
+            ) : null}
+            {node.children?.length ? (
+              <TocWordBudgetTree
+                nodes={node.children}
+                budgetMap={budgetMap}
+                inputValues={inputValues}
+                onChange={onChange}
+              />
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function CollapsedRail({ side, title, subtitle, onExpand }) {
   return (
     <div className={`sidebar-rail ${side}`}>
@@ -231,6 +291,9 @@ export default function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [outlineModalOpen, setOutlineModalOpen] = useState(false);
+  const [wordBudgetModalOpen, setWordBudgetModalOpen] = useState(false);
+  const [wordBudgetDoc, setWordBudgetDoc] = useState(null);
+  const [wordBudgetInputs, setWordBudgetInputs] = useState({});
 
   const selectedTask = useMemo(
     () => tasks.find((item) => item.task_id === selectedTaskId) || null,
@@ -262,10 +325,32 @@ export default function App() {
       (selectedTask?.status === "NEW" && !!selectedTask?.upload_file_name) ||
       selectedTask?.status === "PARSED"
     );
+  const canAdjustWordBudget =
+    !!selectedTaskId &&
+    !!selectedVersionNo &&
+    selectedTask?.status === "TOC_REVIEW";
   const buildTocLabel =
     selectedTask?.status === "NEW"
       ? "1. 解析需求并生成目录（NEW -> TOC_REVIEW）"
       : "1. 生成目录（PARSED -> TOC_REVIEW）";
+  const wordBudgetMap = useMemo(
+    () =>
+      (wordBudgetDoc?.chapters || []).reduce((acc, item) => {
+        acc[item.chapter_node_uid] = item;
+        return acc;
+      }, {}),
+    [wordBudgetDoc]
+  );
+  const estimatedWordBudgetTotal = useMemo(
+    () =>
+      (wordBudgetDoc?.chapters || []).reduce((total, item) => {
+        const rawValue = wordBudgetInputs[item.chapter_node_uid];
+        const parsed = Number.parseInt(rawValue, 10);
+        const nextValue = Number.isInteger(parsed) ? parsed : item.target_total_pages;
+        return total + nextValue;
+      }, 0),
+    [wordBudgetDoc, wordBudgetInputs]
+  );
   const workerRuntimeHint = useMemo(() => {
     if (!selectedTask) {
       return null;
@@ -377,6 +462,9 @@ export default function App() {
       setTocVersions([]);
       setSelectedVersionNo(0);
       setTocDoc(null);
+      setWordBudgetDoc(null);
+      setWordBudgetInputs({});
+      setWordBudgetModalOpen(false);
       setChatMessages([]);
       setNodeStates([]);
       setRecentLogs([]);
@@ -411,13 +499,19 @@ export default function App() {
         const doc = await getToc(taskId, targetVersionNo);
         setTocDoc(doc);
         setSelectedVersionNo(targetVersionNo);
+        setWordBudgetDoc(null);
+        setWordBudgetInputs({});
       } catch {
         setSelectedVersionNo(0);
         setTocDoc(null);
+        setWordBudgetDoc(null);
+        setWordBudgetInputs({});
       }
     } else {
       setSelectedVersionNo(0);
       setTocDoc(null);
+      setWordBudgetDoc(null);
+      setWordBudgetInputs({});
     }
 
     try {
@@ -495,19 +589,20 @@ export default function App() {
   }, [selectedTaskId, loading, configSaving]);
 
   useEffect(() => {
-    if (!outlineModalOpen) {
+    if (!outlineModalOpen && !wordBudgetModalOpen) {
       return undefined;
     }
 
     function handleKeyDown(event) {
       if (event.key === "Escape") {
         setOutlineModalOpen(false);
+        setWordBudgetModalOpen(false);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [outlineModalOpen]);
+  }, [outlineModalOpen, wordBudgetModalOpen]);
 
   async function handleCreateTask(event) {
     event.preventDefault();
@@ -584,6 +679,9 @@ export default function App() {
       "toc"
     );
     if (!result) return;
+    setWordBudgetModalOpen(false);
+    setWordBudgetDoc(null);
+    setWordBudgetInputs({});
     await refreshCurrentTask(result.version_no);
   }
 
@@ -591,6 +689,9 @@ export default function App() {
     if (!selectedTaskId || !versionNo) return;
     setError("");
     setSwitchingVersionNo(versionNo);
+    setWordBudgetModalOpen(false);
+    setWordBudgetDoc(null);
+    setWordBudgetInputs({});
     try {
       const doc = await getToc(selectedTaskId, versionNo);
       setSelectedVersionNo(versionNo);
@@ -622,6 +723,9 @@ export default function App() {
     if (!result) return;
 
     setFeedback("");
+    setWordBudgetModalOpen(false);
+    setWordBudgetDoc(null);
+    setWordBudgetInputs({});
 
     if (result.toc_document) {
       setSelectedVersionNo(result.version_no);
@@ -669,6 +773,9 @@ export default function App() {
 
     setOutlineText("");
     setOutlineModalOpen(false);
+    setWordBudgetModalOpen(false);
+    setWordBudgetDoc(null);
+    setWordBudgetInputs({});
 
     if (result.toc_document) {
       setSelectedVersionNo(result.version_no);
@@ -687,6 +794,66 @@ export default function App() {
     }));
 
     await refreshCurrentTask(result.version_no);
+  }
+
+  async function handleOpenWordBudgetModal() {
+    if (!selectedTaskId || !selectedVersionNo) {
+      setError("请先选择目录版本");
+      return;
+    }
+
+    const result = await withAction(
+      () => getTocWordBudget(selectedTaskId, selectedVersionNo),
+      "",
+      "正在加载目录页面配置",
+      "word-budget"
+    );
+    if (!result) return;
+
+    setWordBudgetDoc(result);
+    setWordBudgetInputs(buildWordBudgetInputState(result));
+    setWordBudgetModalOpen(true);
+  }
+
+  function handleWordBudgetInputChange(chapterNodeUid, value) {
+    setWordBudgetInputs((current) => ({
+      ...current,
+      [chapterNodeUid]: value
+    }));
+  }
+
+  async function handleSaveWordBudget(event) {
+    event.preventDefault();
+    if (!selectedTaskId || !selectedVersionNo || !wordBudgetDoc) {
+      setError("请先选择目录版本");
+      return;
+    }
+
+    const chapters = [];
+    for (const item of wordBudgetDoc.chapters || []) {
+      const rawValue = String(wordBudgetInputs[item.chapter_node_uid] || "").trim();
+      const parsed = Number.parseInt(rawValue, 10);
+      if (!Number.isInteger(parsed) || parsed <= 1) {
+        setError(`${item.chapter_title} 的页数必须是大于 1 的整数`);
+        return;
+      }
+      chapters.push({
+        chapter_node_uid: item.chapter_node_uid,
+        target_total_pages: parsed
+      });
+    }
+
+    const result = await withAction(
+      () => updateTocWordBudget(selectedTaskId, selectedVersionNo, chapters),
+      "目录页面目标已保存",
+      "正在保存目录页面目标",
+      "word-budget"
+    );
+    if (!result) return;
+
+    setWordBudgetDoc(result);
+    setWordBudgetInputs(buildWordBudgetInputState(result));
+    setWordBudgetModalOpen(false);
   }
 
   async function handleConfirmAndStart() {
@@ -784,7 +951,7 @@ export default function App() {
   const parseReportHighlights = parseReport
     ? [
         { label: "段落数", value: parseReport.paragraph_count ?? "-" },
-        { label: "子系统", value: parseReport.subsystem_count ?? "-" },
+        { label: "招标项", value: parseReport.bidding_requirement_count ?? "-" },
         { label: "缺失项", value: parseReport.missing_fields?.length ?? 0 },
       ]
     : [];
@@ -1261,6 +1428,14 @@ export default function App() {
                   </button>
                   <button
                     type="button"
+                    className="ghost-btn strong"
+                    onClick={handleOpenWordBudgetModal}
+                    disabled={loading || !canAdjustWordBudget}
+                  >
+                    调整生成页面
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleConfirmAndStart}
                     disabled={loading || !canReviewToc || !selectedVersionNo}
                   >
@@ -1275,7 +1450,7 @@ export default function App() {
                     导入完整目录树
                   </button>
                 </div>
-                {isBusyForScope(["toc", "confirm", "import"]) ? (
+                {isBusyForScope(["toc", "confirm", "import", "word-budget"]) ? (
                   <div className="inline-activity" role="status" aria-live="polite">
                     <span className="inline-spinner" />
                     <span>{busyLabel}</span>
@@ -1343,6 +1518,76 @@ export default function App() {
           )}
         </aside>
       </div>
+
+      {wordBudgetModalOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setWordBudgetModalOpen(false)}
+        >
+          <div
+            className="modal-card wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="word-budget-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Generation Page Budget</p>
+                <h2 id="word-budget-modal-title">调整生成页面</h2>
+                <p>按一级标题设置总页面预算，系统会把该页面预算分摊到其下三级或四级生成单元。</p>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => setWordBudgetModalOpen(false)}>
+                关闭
+              </button>
+            </div>
+
+            <form className="stack" onSubmit={handleSaveWordBudget}>
+              <div className="word-budget-summary">
+                <div className="diff-card">
+                  <span>目录版本</span>
+                  <strong>v{selectedVersionNo || "-"}</strong>
+                </div>
+                <div className="diff-card">
+                  <span>一级标题数</span>
+                  <strong>{wordBudgetDoc?.chapters?.length || 0}</strong>
+                </div>
+                <div className="diff-card accent-soft">
+                  <span>预计生成总页面数</span>
+                  <strong>{estimatedWordBudgetTotal || 0}</strong>
+                </div>
+              </div>
+
+              <div className="toc-preview-panel framed budget-modal-tree">
+                <TocWordBudgetTree
+                  nodes={visibleTocNodes}
+                  budgetMap={wordBudgetMap}
+                  inputValues={wordBudgetInputs}
+                  onChange={handleWordBudgetInputChange}
+                />
+              </div>
+
+              <p className="muted-note">
+                每个输入值作用于该一级标题下全部三级或四级生成单元，系统会按生成单元数量进行分摊，
+                每个最小生成单元会按分摊后的页面预算生成，单个一级标题的实际成文允许落在输入页数到输入页数 + 1 页之间。
+              </p>
+
+              <div className="modal-actions">
+                <button type="button" className="ghost-btn" onClick={() => setWordBudgetModalOpen(false)}>
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || !canAdjustWordBudget || !wordBudgetDoc}
+                >
+                  保存页面配置
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       {outlineModalOpen ? (
         <div

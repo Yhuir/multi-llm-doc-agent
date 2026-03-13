@@ -33,6 +33,15 @@ class TOCConfirmRequest(BaseModel):
     version_no: int
 
 
+class TOCWordBudgetItemRequest(BaseModel):
+    chapter_node_uid: str = Field(min_length=1)
+    target_total_pages: int = Field(gt=1)
+
+
+class TOCWordBudgetUpdateRequest(BaseModel):
+    chapters: list[TOCWordBudgetItemRequest] = Field(default_factory=list)
+
+
 class SystemConfigUpdateRequest(BaseModel):
     text_provider: str | None = None
     image_provider: str | None = None
@@ -156,6 +165,33 @@ def get_toc(task_id: str, version_no: int) -> dict[str, Any]:
         return service.get_toc_document(task_id, version_no)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/tasks/{task_id}/toc/{version_no}/word-budget")
+def get_toc_word_budget(task_id: str, version_no: int) -> dict[str, Any]:
+    try:
+        return service.get_toc_word_budget(task_id, version_no)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/tasks/{task_id}/toc/{version_no}/word-budget")
+def update_toc_word_budget(
+    task_id: str,
+    version_no: int,
+    payload: TOCWordBudgetUpdateRequest,
+) -> dict[str, Any]:
+    try:
+        return service.update_toc_word_budget(
+            task_id,
+            version_no,
+            {
+                item.chapter_node_uid: item.target_total_pages
+                for item in payload.chapters
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/tasks/{task_id}/toc/confirmed")

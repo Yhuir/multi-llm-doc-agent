@@ -16,11 +16,15 @@ from backend.models.enums import ChatRole, EventStatus, NodeStatus, TaskStatus
 from backend.models.schemas import (
     ChatMessage,
     EventLog,
+    GenerationWordPlan,
+    GenerationWordTarget,
     NodeState,
     ParseReport,
     RequirementDocument,
+    TOCChapterWordBudget,
     TOCDocument,
     TOCNode,
+    TOCWordBudgetDocument,
     TOCVersion,
     utc_now_iso,
 )
@@ -36,6 +40,7 @@ from backend.worker.node_runner import NodeRunner
 class Orchestrator:
     """Coordinates phase-level transitions between UI requests and worker execution."""
 
+    _WORDS_PER_PAGE = 500
     _ALLOWED_TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.NEW: {TaskStatus.PARSED, TaskStatus.PAUSED, TaskStatus.FAILED},
         TaskStatus.PARSED: {TaskStatus.TOC_REVIEW, TaskStatus.PAUSED, TaskStatus.FAILED},
@@ -73,7 +78,12 @@ class Orchestrator:
         self.toc_generator = toc_generator or TOCGeneratorAgent()
         self.toc_review_agent = toc_review_agent or TOCReviewChatAgent()
 
-    def run_parse_requirement(self, task_id: str) -> dict[str, Any]:
+    def run_parse_requirement(
+        self,
+        task_id: str,
+        *,
+        generation_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         task = self._require_task(task_id)
         if task.status != TaskStatus.NEW:
             raise ValueError("Requirement parse can only run when task status is NEW.")
@@ -85,6 +95,7 @@ class Orchestrator:
             task_id=task_id,
             upload_file_path=Path(task.upload_file_path),
             fallback_title=task.title,
+            generation_config=generation_config,
         )
         parse_report = ParseReport.model_validate(parse_report_payload)
 
@@ -126,7 +137,7 @@ class Orchestrator:
     ) -> TOCVersion:
         task = self._require_task(task_id)
         if task.status == TaskStatus.NEW:
-            self.run_parse_requirement(task_id)
+            self.run_parse_requirement(task_id, generation_config=generation_config)
             task = self._require_task(task_id)
         if task.status != TaskStatus.PARSED:
             raise ValueError("TOC generation requires task status PARSED.")
@@ -232,9 +243,16 @@ class Orchestrator:
         )
 
         old_doc = self._load_toc(Path(base_version.file_path))
+        requirement_path = self._task_path(task_id, "parsed", "requirement.json")
+        if not requirement_path.exists():
+            raise ValueError("requirement.json missing. Parse requirement first.")
+        requirement = RequirementDocument.model_validate(
+            json.loads(requirement_path.read_text(encoding="utf-8"))
+        )
         new_doc = self.toc_review_agent.review(
             toc_doc=old_doc,
             feedback=feedback,
+            requirement=requirement,
             review_config=review_config,
         )
 
@@ -294,10 +312,12 @@ class Orchestrator:
         outline_text: str,
         *,
         based_on_version_no: int | None = None,
+        generation_config: dict[str, Any] | None = None,
     ) -> TOCVersion:
         task = self._require_task(task_id)
+        _ = generation_config
         if task.status == TaskStatus.NEW:
-            self.run_parse_requirement(task_id)
+            self.run_parse_requirement(task_id, generation_config=generation_config)
             task = self._require_task(task_id)
 
         if task.status not in {TaskStatus.PARSED, TaskStatus.TOC_REVIEW}:
@@ -314,10 +334,19 @@ class Orchestrator:
             base_version = latest
 
         new_version_no = 1 if latest is None else latest.version_no + 1
+        root_title = "工程实施方案"
+        requirement_path = self._task_path(task_id, "parsed", "requirement.json")
+        if requirement_path.exists():
+            requirement = RequirementDocument.model_validate(
+                json.loads(requirement_path.read_text(encoding="utf-8"))
+            )
+            root_title = requirement.project.name or root_title
+
         toc_doc = build_toc_document_from_outline(
             outline_text,
             version_no=new_version_no,
             based_on_version=base_version.version_no if base_version else None,
+            root_title=root_title,
         )
 
         diff_summary: dict[str, Any] | None = None
@@ -359,7 +388,7 @@ class Orchestrator:
                 message_id=f"msg_{uuid.uuid4().hex[:12]}",
                 task_id=task_id,
                 role=ChatRole.ASSISTANT,
-                content=f"已导入目录树并创建 toc_v{new_version_no}。",
+                content=f"已直接采用导入目录树创建 toc_v{new_version_no}。",
                 related_toc_version=new_version_no,
             )
         )
@@ -375,7 +404,7 @@ class Orchestrator:
         self._log(
             task_id,
             stage="TOC_IMPORT",
-            message=f"Imported outline and created toc_v{new_version_no}.",
+            message=f"Imported outline and created toc_v{new_version_no} without TOC regeneration.",
             output_artifact_path=str(toc_path),
             meta_json={
                 "based_on_version_no": base_version.version_no if base_version else None,
@@ -385,6 +414,133 @@ class Orchestrator:
             },
         )
         return toc_version
+
+    def get_toc_word_budget(self, task_id: str, version_no: int) -> TOCWordBudgetDocument:
+        self._require_task(task_id)
+        toc_version = self.toc_repository.get_version(task_id, version_no)
+        if toc_version is None:
+            raise ValueError(f"TOC version {version_no} does not exist.")
+
+        toc_doc = self._load_toc(Path(toc_version.file_path))
+        chapter_nodes = self._top_level_budget_nodes(toc_doc.tree)
+        saved_doc = self._load_word_budget_document(task_id, version_no)
+        inherited_doc = None
+        if saved_doc is None and toc_version.based_on_version_no is not None:
+            inherited_doc = self._load_word_budget_document(task_id, toc_version.based_on_version_no)
+
+        saved_targets = {
+            item.chapter_node_uid: item.target_total_pages
+            for item in (saved_doc.chapters if saved_doc is not None else [])
+        }
+        inherited_targets = self._inherit_word_budget_targets(
+            chapter_nodes,
+            inherited_doc.chapters if inherited_doc is not None else [],
+        )
+
+        chapters: list[TOCChapterWordBudget] = []
+        estimated_total_words = 0
+        estimated_total_pages = 0
+        for chapter in chapter_nodes:
+            generation_units = self._collect_generation_units(chapter)
+            default_total_words = len(generation_units) * 2000
+            default_total_pages = self._words_to_pages(default_total_words)
+            target_total_pages = saved_targets.get(
+                chapter.node_uid,
+                inherited_targets.get(chapter.node_uid, default_total_pages),
+            )
+            target_total_words = self._pages_to_words(target_total_pages)
+            estimated_total_pages += target_total_pages
+            estimated_total_words += target_total_words
+            chapters.append(
+                TOCChapterWordBudget(
+                    chapter_node_uid=chapter.node_uid,
+                    chapter_node_id=chapter.node_id,
+                    chapter_title=chapter.title,
+                    generation_unit_count=len(generation_units),
+                    generation_unit_node_uids=[item.node_uid for item in generation_units],
+                    min_total_words=target_total_words,
+                    default_total_words=default_total_words,
+                    target_total_words=target_total_words,
+                    min_total_pages=2,
+                    default_total_pages=default_total_pages,
+                    target_total_pages=target_total_pages,
+                    is_custom=chapter.node_uid in saved_targets or chapter.node_uid in inherited_targets,
+                )
+            )
+
+        return TOCWordBudgetDocument(
+            task_id=task_id,
+            version_no=version_no,
+            chapters=chapters,
+            estimated_total_words=estimated_total_words,
+            estimated_total_pages=estimated_total_pages,
+        )
+
+    def update_toc_word_budget(
+        self,
+        task_id: str,
+        version_no: int,
+        chapter_targets: dict[str, int],
+    ) -> TOCWordBudgetDocument:
+        task = self._require_task(task_id)
+        if task.status != TaskStatus.TOC_REVIEW:
+            raise ValueError("Page budgets can only be edited during TOC_REVIEW stage.")
+
+        toc_version = self.toc_repository.get_version(task_id, version_no)
+        if toc_version is None:
+            raise ValueError(f"TOC version {version_no} does not exist.")
+        if toc_version.is_confirmed or task.confirmed_toc_version == version_no:
+            raise ValueError("Confirmed TOC page budgets cannot be edited.")
+
+        current = self.get_toc_word_budget(task_id, version_no)
+        current_by_uid = {item.chapter_node_uid: item for item in current.chapters}
+        unknown_uids = [uid for uid in chapter_targets if uid not in current_by_uid]
+        if unknown_uids:
+            raise ValueError(f"Unknown TOC chapter node uid: {unknown_uids[0]}")
+
+        chapters: list[TOCChapterWordBudget] = []
+        estimated_total_words = 0
+        estimated_total_pages = 0
+        for item in current.chapters:
+            target_total_pages = int(chapter_targets.get(item.chapter_node_uid, item.target_total_pages))
+            if target_total_pages <= 1:
+                raise ValueError(f"{item.chapter_title} 的页数必须是大于 1 的整数。")
+            target_total_words = self._pages_to_words(target_total_pages)
+            estimated_total_pages += target_total_pages
+            estimated_total_words += target_total_words
+            chapters.append(
+                item.model_copy(
+                    update={
+                        "min_total_words": target_total_words,
+                        "target_total_words": target_total_words,
+                        "target_total_pages": target_total_pages,
+                        "is_custom": target_total_pages != item.default_total_pages,
+                    }
+                )
+            )
+
+        document = TOCWordBudgetDocument(
+            task_id=task_id,
+            version_no=version_no,
+            chapters=chapters,
+            estimated_total_words=estimated_total_words,
+            estimated_total_pages=estimated_total_pages,
+        )
+        budget_path = self._word_budget_path(task_id, version_no)
+        self._write_json(budget_path, document.model_dump(mode="json"))
+        self._log(
+            task_id,
+            stage="TOC_WORD_BUDGET",
+            message=f"Saved page budget for toc_v{version_no}.",
+            output_artifact_path=str(budget_path),
+            meta_json={
+                "version_no": version_no,
+                "estimated_total_pages": estimated_total_pages,
+                "estimated_total_words": estimated_total_words,
+                "chapter_count": len(chapters),
+            },
+        )
+        return document
 
     def confirm_toc(self, task_id: str, version_no: int) -> int:
         task = self._require_task(task_id)
@@ -398,6 +554,22 @@ class Orchestrator:
         toc_doc = self._load_toc(Path(toc_version.file_path))
         confirmed_path = self._task_path(task_id, "toc", "toc_confirmed.json")
         self._write_json(confirmed_path, toc_doc.model_dump(mode="json"))
+        word_budget = self.get_toc_word_budget(task_id, version_no)
+        word_budget_path = self._word_budget_path(task_id, version_no)
+        if not word_budget_path.exists():
+            self._write_json(word_budget_path, word_budget.model_dump(mode="json"))
+
+        generation_word_plan = self._build_generation_word_plan(
+            task_id=task_id,
+            version_no=version_no,
+            toc_doc=toc_doc,
+            word_budget=word_budget,
+        )
+        generation_word_plan_path = self._task_path(task_id, "toc", "generation_word_plan.json")
+        self._write_json(
+            generation_word_plan_path,
+            generation_word_plan.model_dump(mode="json"),
+        )
 
         snapshots = self.toc_repository.list_generation_units(task_id, version_no)
         if not snapshots:
@@ -441,7 +613,13 @@ class Orchestrator:
             stage="TOC_CONFIRM",
             message=f"Confirmed toc_v{version_no} and created {len(nodes)} node states.",
             output_artifact_path=str(confirmed_path),
-            meta_json={"confirmed_version_no": version_no, "seeded_nodes": len(nodes)},
+            meta_json={
+                "confirmed_version_no": version_no,
+                "seeded_nodes": len(nodes),
+                "estimated_total_pages": generation_word_plan.estimated_total_pages,
+                "estimated_total_words": generation_word_plan.estimated_total_words,
+                "generation_word_plan_path": str(generation_word_plan_path),
+            },
         )
         return len(nodes)
 
@@ -714,14 +892,176 @@ class Orchestrator:
         return flat
 
     def _renumber_node_ids(self, tree: list[TOCNode]) -> None:
-        for root_idx, root in enumerate(tree, start=1):
-            root.node_id = str(root_idx)
+        for root in tree:
+            root.node_id = ""
             self._renumber_children(root)
 
     def _renumber_children(self, parent: TOCNode) -> None:
         for idx, child in enumerate(parent.children, start=1):
-            child.node_id = f"{parent.node_id}.{idx}"
+            child.node_id = str(idx) if not parent.node_id else f"{parent.node_id}.{idx}"
             self._renumber_children(child)
+
+    def _word_budget_path(self, task_id: str, version_no: int) -> Path:
+        return self._task_path(task_id, "toc", f"toc_v{version_no}_word_budget.json")
+
+    def _load_word_budget_document(self, task_id: str, version_no: int) -> TOCWordBudgetDocument | None:
+        path = self._word_budget_path(task_id, version_no)
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = self._normalize_word_budget_payload(payload)
+        return TOCWordBudgetDocument.model_validate(payload)
+
+    def _top_level_budget_nodes(self, tree: list[TOCNode]) -> list[TOCNode]:
+        if len(tree) == 1 and tree[0].level <= 1 and tree[0].children:
+            return tree[0].children
+        return tree
+
+    def _collect_generation_units(self, node: TOCNode) -> list[TOCNode]:
+        if node.is_generation_unit:
+            return [node]
+
+        units: list[TOCNode] = []
+        for child in node.children:
+            units.extend(self._collect_generation_units(child))
+        return units
+
+    def _inherit_word_budget_targets(
+        self,
+        chapter_nodes: list[TOCNode],
+        inherited_chapters: list[TOCChapterWordBudget],
+    ) -> dict[str, int]:
+        if not inherited_chapters:
+            return {}
+
+        by_uid = {
+            item.chapter_node_uid: item.target_total_pages
+            for item in inherited_chapters
+        }
+        by_title = {
+            self._normalize_budget_key(item.chapter_title): item.target_total_pages
+            for item in inherited_chapters
+        }
+
+        inherited: dict[str, int] = {}
+        for chapter in chapter_nodes:
+            if chapter.node_uid in by_uid:
+                inherited[chapter.node_uid] = by_uid[chapter.node_uid]
+                continue
+            normalized_title = self._normalize_budget_key(chapter.title)
+            if normalized_title in by_title:
+                inherited[chapter.node_uid] = by_title[normalized_title]
+        return inherited
+
+    def _build_generation_word_plan(
+        self,
+        *,
+        task_id: str,
+        version_no: int,
+        toc_doc: TOCDocument,
+        word_budget: TOCWordBudgetDocument,
+    ) -> GenerationWordPlan:
+        chapter_budget_map = {
+            item.chapter_node_uid: item
+            for item in word_budget.chapters
+        }
+        node_targets: list[GenerationWordTarget] = []
+        estimated_total_words = 0
+        estimated_total_pages = 0
+
+        for chapter in self._top_level_budget_nodes(toc_doc.tree):
+            generation_units = self._collect_generation_units(chapter)
+            if not generation_units:
+                continue
+
+            budget_item = chapter_budget_map.get(chapter.node_uid)
+            total_pages = (
+                budget_item.target_total_pages
+                if budget_item is not None and budget_item.target_total_pages > 0
+                else self._words_to_pages(len(generation_units) * 2000)
+            )
+            min_total_words = self._pages_to_words(total_pages)
+            max_total_words = self._pages_to_words(total_pages + 1)
+            min_allocations = self._allocate_target_words(min_total_words, len(generation_units))
+            max_allocations = self._allocate_target_words(max_total_words, len(generation_units))
+            estimated_total_pages += total_pages
+            estimated_total_words += sum(min_allocations)
+
+            for unit, target_words, max_words in zip(generation_units, min_allocations, max_allocations):
+                min_words = target_words
+                max_words = max(min_words, max_words)
+                node_targets.append(
+                    GenerationWordTarget(
+                        node_uid=unit.node_uid,
+                        node_id=unit.node_id,
+                        title=unit.title,
+                        chapter_node_uid=chapter.node_uid,
+                        chapter_title=chapter.title,
+                        target_words=target_words,
+                        min_words=min_words,
+                        max_words=max_words,
+                        target_pages=round(target_words / self._WORDS_PER_PAGE, 2),
+                        min_pages=round(min_words / self._WORDS_PER_PAGE, 2),
+                        max_pages=round(max_words / self._WORDS_PER_PAGE, 2),
+                    )
+                )
+
+        return GenerationWordPlan(
+            task_id=task_id,
+            version_no=version_no,
+            node_targets=node_targets,
+            estimated_total_words=estimated_total_words,
+            estimated_total_pages=estimated_total_pages,
+        )
+
+    def _normalize_word_budget_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        chapters = []
+        estimated_total_pages = 0
+        estimated_total_words = 0
+        for raw_item in normalized.get("chapters", []):
+            item = dict(raw_item)
+            default_total_words = int(item.get("default_total_words") or 0)
+            target_total_words = int(item.get("target_total_words") or default_total_words)
+            target_total_pages = int(item.get("target_total_pages") or self._words_to_pages(target_total_words))
+            default_total_pages = int(item.get("default_total_pages") or self._words_to_pages(default_total_words))
+            min_total_pages = int(item.get("min_total_pages") or 2)
+            item["target_total_pages"] = target_total_pages
+            item["default_total_pages"] = default_total_pages
+            item["min_total_pages"] = min_total_pages
+            item["target_total_words"] = self._pages_to_words(target_total_pages)
+            item["default_total_words"] = self._pages_to_words(default_total_pages)
+            item["min_total_words"] = self._pages_to_words(target_total_pages)
+            estimated_total_pages += target_total_pages
+            estimated_total_words += item["target_total_words"]
+            chapters.append(item)
+        normalized["chapters"] = chapters
+        normalized["estimated_total_pages"] = estimated_total_pages
+        normalized["estimated_total_words"] = estimated_total_words
+        return normalized
+
+    def _pages_to_words(self, total_pages: int) -> int:
+        return max(0, int(total_pages)) * self._WORDS_PER_PAGE
+
+    def _words_to_pages(self, total_words: int) -> int:
+        words = max(0, int(total_words))
+        if words == 0:
+            return 0
+        return max(2, (words + self._WORDS_PER_PAGE - 1) // self._WORDS_PER_PAGE)
+
+    @staticmethod
+    def _allocate_target_words(total_words: int, count: int) -> list[int]:
+        if count <= 0:
+            return []
+        base, remainder = divmod(total_words, count)
+        allocations = [base] * count
+        for index in range(remainder):
+            allocations[index] += 1
+        return allocations
+
+    @staticmethod
+    def _normalize_budget_key(text: str) -> str:
+        return "".join(part for part in str(text).lower().strip() if not part.isspace())
 
     @staticmethod
     def _load_toc(path: Path) -> TOCDocument:
